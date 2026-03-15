@@ -115,7 +115,11 @@ export class ShiftResolver {
     return {
       success: result.success,
       assignmentId: result.assignmentId,
-      violations: (result.violations ?? []).map(v => ({ type: v.type, message: v.message })),
+      violations: (result.violations ?? []).map(v => ({
+        type: v.type,
+        message: v.message,
+        severity: v.severity,
+      })),
       overtimeWarnings: (result.overtimeWarnings ?? []).map(w => ({ type: w.type, message: w.message })),
       suggestions: (result.suggestions ?? []).map(s => ({
         userId: s.userId,
@@ -144,7 +148,11 @@ export class ShiftResolver {
     const result = await this.whatIfAssignmentUc.execute({ shiftId, userId });
     return {
       canAssign: result.canAssign,
-      violations: (result.violations ?? []).map(v => ({ type: v.type, message: v.message })),
+      violations: (result.violations ?? []).map(v => ({
+        type: v.type,
+        message: v.message,
+        severity: v.severity,
+      })),
       warnings: (result.overtimeWarnings ?? []).map(w => ({ type: w.type, message: w.message })),
       projectedWeeklyHours: result.projectedWeeklyHours ?? 0,
     };

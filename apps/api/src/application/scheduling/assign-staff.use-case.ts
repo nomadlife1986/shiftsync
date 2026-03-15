@@ -132,6 +132,7 @@ export class AssignStaffUseCase implements IUseCase<AssignStaffInput, Assignment
         violations: overtimeResult.blocks.map((b) => ({
           type: b.type,
           message: b.message,
+          severity: 'error',
         })),
         overtimeWarnings: overtimeResult.warnings,
       };

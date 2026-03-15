@@ -4,6 +4,8 @@ import { ObjectType, Field, Float, ID } from '@nestjs/graphql';
 export class ConstraintViolationType {
   @Field() type!: string;
   @Field() message!: string;
+  /** 'error' blocks assignment; 'warning' is informational */
+  @Field() severity!: string;
 }
 
 @ObjectType()
