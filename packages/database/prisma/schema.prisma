@@ -1,0 +1,313 @@
+generator client {
+  provider     = "prisma-client-js"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+enum ShiftStatus {
+  DRAFT
+  PUBLISHED
+  COMPLETED
+  CANCELLED
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  SWAP_PENDING
+  DROPPED
+  COMPLETED
+  CANCELLED
+}
+
+enum SwapStatus {
+  PENDING_ACCEPTANCE
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum DropStatus {
+  OPEN
+  PICKED_UP_PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum NotificationType {
+  SHIFT_ASSIGNED
+  SHIFT_CHANGED
+  SHIFT_CANCELLED
+  SCHEDULE_PUBLISHED
+  SWAP_REQUEST_RECEIVED
+  SWAP_REQUEST_ACCEPTED
+  SWAP_REQUEST_APPROVED
+  SWAP_REQUEST_REJECTED
+  SWAP_REQUEST_CANCELLED
+  DROP_REQUEST_AVAILABLE
+  DROP_REQUEST_PICKED_UP
+  DROP_REQUEST_APPROVED
+  DROP_REQUEST_EXPIRED
+  OVERTIME_WARNING
+  AVAILABILITY_CHANGED
+}
+
+// ─── Location ─────────────────────────────────────────────────────────────
+
+model Location {
+  id        String   @id @default(cuid())
+  name      String
+  address   String
+  timezone  String   // IANA timezone e.g. "America/Los_Angeles"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shifts             Shift[]
+  managerAssignments ManagerLocation[]
+  staffCertifications StaffCertification[]
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────
+
+model User {
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  passwordHash       String
+  firstName          String
+  lastName           String
+  role               UserRole
+  phone              String?
+  desiredWeeklyHours Int?     // Soft preference for scheduling
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  skills              StaffSkill[]
+  certifications      StaffCertification[]
+  managedLocations    ManagerLocation[]
+  availabilities      Availability[]
+  assignments         Assignment[]
+  swapRequestsFrom    SwapRequest[]   @relation("SwapRequester")
+  swapRequestsTo      SwapRequest[]   @relation("SwapTarget")
+  dropRequests        DropRequest[]   @relation("DropRequester")
+  dropsPickedUp       DropRequest[]   @relation("DropPickedUp")
+  notifications       Notification[]
+  notificationPref    NotificationPreference?
+  assignedByMe        Assignment[]    @relation("AssignedBy")
+  managerSwapActions  SwapRequest[]   @relation("SwapManager")
+  managerDropActions  DropRequest[]   @relation("DropManager")
+}
+
+// ─── Staff Skill ──────────────────────────────────────────────────────────
+
+model StaffSkill {
+  id     String @id @default(cuid())
+  userId String
+  skill  String // "bartender", "line_cook", "server", "host"
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, skill])
+  @@index([skill])
+}
+
+// ─── Staff Certification (authorized locations) ───────────────────────────
+
+model StaffCertification {
+  id          String    @id @default(cuid())
+  userId      String
+  locationId  String
+  certifiedAt DateTime  @default(now())
+  revokedAt   DateTime? // Null = active, set = revoked
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, locationId])
+}
+
+// ─── Manager-Location Assignment ──────────────────────────────────────────
+
+model ManagerLocation {
+  id         String @id @default(cuid())
+  userId     String
+  locationId String
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, locationId])
+}
+
+// ─── Availability ─────────────────────────────────────────────────────────
+
+model Availability {
+  id           String    @id @default(cuid())
+  userId       String
+  dayOfWeek    Int       // 0=Sunday, 6=Saturday
+  startTime    String    // "09:00" (HH:mm)
+  endTime      String    // "17:00" (HH:mm)
+  isRecurring  Boolean   @default(true)
+  specificDate DateTime? // For one-off overrides (non-recurring)
+  isAvailable  Boolean   @default(true) // false = blocked out
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, dayOfWeek])
+  @@index([userId, specificDate])
+}
+
+// ─── Shift ────────────────────────────────────────────────────────────────
+
+model Shift {
+  id              String      @id @default(cuid())
+  locationId      String
+  startTime       DateTime    // UTC
+  endTime         DateTime    // UTC
+  requiredSkill   String
+  headcount       Int
+  status          ShiftStatus @default(DRAFT)
+  scheduleWeek    DateTime?   // Monday of the schedule week
+  publishedAt     DateTime?
+  editCutoffHours Int         @default(48)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  location     Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  assignments  Assignment[]
+  swapRequests SwapRequest[]
+  dropRequests DropRequest[]
+
+  @@index([locationId, scheduleWeek])
+  @@index([startTime, endTime])
+  @@index([status])
+}
+
+// ─── Assignment ───────────────────────────────────────────────────────────
+
+model Assignment {
+  id         String           @id @default(cuid())
+  shiftId    String
+  userId     String
+  status     AssignmentStatus @default(ASSIGNED)
+  assignedBy String
+  assignedAt DateTime         @default(now())
+
+  shift    Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  user     User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assigner User  @relation("AssignedBy", fields: [assignedBy], references: [id])
+
+  @@unique([shiftId, userId])
+  @@index([userId, status])
+}
+
+// ─── Swap Request ─────────────────────────────────────────────────────────
+
+model SwapRequest {
+  id              String     @id @default(cuid())
+  shiftId         String
+  requesterId     String
+  targetId        String?    // Null if open swap
+  status          SwapStatus @default(PENDING_ACCEPTANCE)
+  targetAccepted  Boolean?
+  managerApproved Boolean?
+  managerId       String?
+  managerNote     String?
+  cancelledBy     String?
+  cancelReason    String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  shift     Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  requester User  @relation("SwapRequester", fields: [requesterId], references: [id])
+  target    User? @relation("SwapTarget", fields: [targetId], references: [id])
+  manager   User? @relation("SwapManager", fields: [managerId], references: [id])
+
+  @@index([requesterId, status])
+  @@index([targetId, status])
+  @@index([shiftId])
+}
+
+// ─── Drop Request ─────────────────────────────────────────────────────────
+
+model DropRequest {
+  id           String     @id @default(cuid())
+  shiftId      String
+  requesterId  String
+  status       DropStatus @default(OPEN)
+  pickedUpById String?
+  managerId    String?
+  managerNote  String?
+  expiresAt    DateTime   // 24 hours before shift start
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  shift     Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  requester User  @relation("DropRequester", fields: [requesterId], references: [id])
+  pickedUpBy User? @relation("DropPickedUp", fields: [pickedUpById], references: [id])
+  manager   User?  @relation("DropManager", fields: [managerId], references: [id])
+
+  @@index([status])
+  @@index([shiftId])
+  @@index([expiresAt])
+}
+
+// ─── Notification ─────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+}
+
+// ─── Notification Preference ──────────────────────────────────────────────
+
+model NotificationPreference {
+  id     String  @id @default(cuid())
+  userId String  @unique
+  inApp  Boolean @default(true)
+  email  Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Domain Event Store (Event Sourcing) ──────────────────────────────────
+
+model DomainEvent {
+  id            String   @id @default(cuid())
+  aggregateId   String
+  aggregateType String   // "Shift", "SwapRequest", "DropRequest"
+  eventType     String   // "ShiftCreated", "StaffAssigned", etc.
+  version       Int      // Sequence number within aggregate
+  payload       Json     // Event data
+  metadata      Json     // { userId, correlationId, timestamp }
+  occurredAt    DateTime @default(now())
+
+  @@unique([aggregateId, version])
+  @@index([aggregateId, version])
+  @@index([aggregateType, occurredAt])
+  @@index([eventType])
+}

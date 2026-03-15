@@ -1,0 +1,21 @@
+{
+  "name": "shiftsync",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "db:generate": "turbo db:generate",
+    "db:push": "turbo db:push",
+    "db:seed": "pnpm --filter @shiftsync/database seed",
+    "clean": "turbo clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.8.0",
+    "typescript": "^5.8.0"
+  },
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}

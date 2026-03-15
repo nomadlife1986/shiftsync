@@ -1,0 +1,85 @@
+# ─── Dependencies ────────────────────────────────────────────────────────────
+node_modules
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# ─── Build outputs ───────────────────────────────────────────────────────────
+dist
+build
+out
+.next
+.turbo
+*.tsbuildinfo
+.cache
+.parcel-cache
+.swc
+
+# ─── Environment variables ───────────────────────────────────────────────────
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+.env.staging
+.env.*.local
+!.env.example
+!.env.*.example
+packages/database/.env
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ─── Testing & coverage ──────────────────────────────────────────────────────
+coverage
+*.lcov
+.nyc_output
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# ─── OS & editors ────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*.swo
+
+# ─── LLM / AI assistant files ────────────────────────────────────────────────
+HANDOFF.md
+HANDOFF-*.md
+*-handoff.md
+CLAUDE.md
+*-llm.md
+*-ai-notes.md
+*.llm.md
+.claude/
+
+# ─── Misc ────────────────────────────────────────────────────────────────────
+*.tgz
+*.tar.gz
+*.zip
+.vercel
+.netlify
