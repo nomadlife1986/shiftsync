@@ -31,17 +31,11 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Copy manifests for prod install
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json ./
-COPY apps/api/package.json apps/api/
-COPY packages/database/package.json packages/database/
-COPY packages/shared-types/package.json packages/shared-types/
-
-RUN pnpm install --frozen-lockfile --prod
-
-# Copy compiled output and generated Prisma client
+# Copy runtime dependencies and built output from builder
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
+COPY --from=builder /app/packages/database ./packages/database
 COPY --from=builder /app/packages/shared-types ./packages/shared-types
 
 EXPOSE 3002
