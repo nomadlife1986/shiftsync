@@ -33,8 +33,10 @@ ENV NODE_ENV=production
 
 # Copy runtime dependencies and built output from builder
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
+COPY --from=builder /app/packages/database/node_modules ./packages/database/node_modules
 COPY --from=builder /app/packages/database ./packages/database
 COPY --from=builder /app/packages/shared-types ./packages/shared-types
 
