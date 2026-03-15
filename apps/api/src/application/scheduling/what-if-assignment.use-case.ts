@@ -67,7 +67,7 @@ export class WhatIfAssignmentUseCase implements IUseCase<WhatIfInput, WhatIfOutp
       locationTimezone: location.timezone,
     });
 
-    const violations = validationResult.isFailure ? validationResult.error : [];
+    const violations = validationResult.isFailure ? validationResult.error : validationResult.value;
 
     // Run overtime check including proposed assignment
     const shiftTimes = allUserShifts

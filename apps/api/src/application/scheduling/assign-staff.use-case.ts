@@ -81,9 +81,14 @@ export class AssignStaffUseCase implements IUseCase<AssignStaffInput, Assignment
       locationTimezone: location.timezone,
     });
 
-    // 5. If violations, suggest alternatives
+    // 5. Hard violations → fail with suggestions; soft warnings → proceed
+    const softWarnings = validationResult.isSuccess ? (validationResult.value ?? []) : [];
+    const constraintViolations = validationResult.isFailure
+      ? validationResult.error
+      : validationResult.value;
+
     if (validationResult.isFailure) {
-      const violations = validationResult.error;
+      const violations = constraintViolations;
       const availableStaff = await this.userRepo.findStaffByLocationAndSkill(
         shift.locationId,
         shift.requiredSkill,
@@ -197,6 +202,7 @@ export class AssignStaffUseCase implements IUseCase<AssignStaffInput, Assignment
     return {
       success: true,
       assignmentId: assignment.id,
+      violations: constraintViolations.length > 0 ? constraintViolations : undefined,
       overtimeWarnings: overtimeResult.warnings.length > 0 ? overtimeResult.warnings : undefined,
     };
   }

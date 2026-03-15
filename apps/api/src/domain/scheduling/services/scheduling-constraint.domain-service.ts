@@ -1,4 +1,7 @@
 import { Result } from '../../common/result';
+// validate() returns Result<ConstraintViolation[], ConstraintViolation[]>
+// isSuccess  → value = soft warnings only (assignment can proceed)
+// isFailure  → error = all violations including hard errors
 import { UserEntity } from '../../user/entities/user.entity';
 import { ShiftEntity } from '../entities/shift.entity';
 import { AssignmentEntity } from '../entities/assignment.entity';
@@ -42,7 +45,7 @@ export class SchedulingConstraintService {
     existingShiftAssignments: AssignmentEntity[];
     allShiftsForUser: ShiftEntity[];
     locationTimezone: string;
-  }): Result<void, ConstraintViolation[]> {
+  }): Result<ConstraintViolation[], ConstraintViolation[]> {
     const violations: ConstraintViolation[] = [];
     const { shift, user, existingUserAssignments, existingShiftAssignments, allShiftsForUser, locationTimezone } = params;
 
