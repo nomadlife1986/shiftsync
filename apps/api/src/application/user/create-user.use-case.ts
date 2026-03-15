@@ -14,6 +14,8 @@ export interface CreateUserInput {
   phone?: string;
   desiredWeeklyHours?: number;
   skills?: string[];
+  certifiedLocationIds?: string[];
+  managedLocationIds?: string[];
 }
 
 @Injectable()
@@ -29,6 +31,8 @@ export class CreateUserUseCase implements IUseCase<CreateUserInput, UserEntity> 
 
     const passwordHash = await this.hasher.hash(input.password);
     const now = new Date();
+    const certifiedLocationIds = [...new Set(input.certifiedLocationIds ?? [])];
+    const managedLocationIds = [...new Set(input.managedLocationIds ?? [])];
     const user = UserEntity.create({
       email: input.email,
       passwordHash,
@@ -38,9 +42,15 @@ export class CreateUserUseCase implements IUseCase<CreateUserInput, UserEntity> 
       phone: input.phone ?? null,
       desiredWeeklyHours: input.desiredWeeklyHours ?? null,
       skills: (input.skills ?? []).map(s => s.toLowerCase()),
-      certifications: [],
+      certifications: input.role === 'STAFF'
+        ? certifiedLocationIds.map((locationId) => ({
+            locationId,
+            certifiedAt: now,
+            revokedAt: null,
+          }))
+        : [],
       availabilities: [],
-      managedLocationIds: [],
+      managedLocationIds: input.role === 'MANAGER' ? managedLocationIds : [],
       createdAt: now,
       updatedAt: now,
     }, randomUUID());

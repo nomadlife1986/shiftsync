@@ -40,6 +40,8 @@ export class CreateUserInput {
   @Field({ nullable: true }) phone?: string;
   @Field({ nullable: true }) desiredWeeklyHours?: number;
   @Field(() => [String], { nullable: true }) skills?: string[];
+  @Field(() => [String], { nullable: true }) certifiedLocationIds?: string[];
+  @Field(() => [String], { nullable: true }) managedLocationIds?: string[];
 }
 
 @InputType()
@@ -49,6 +51,8 @@ export class UpdateUserInput {
   @Field({ nullable: true }) phone?: string;
   @Field({ nullable: true }) desiredWeeklyHours?: number;
   @Field(() => [String], { nullable: true }) skills?: string[];
+  @Field(() => [String], { nullable: true }) certifiedLocationIds?: string[];
+  @Field(() => [String], { nullable: true }) managedLocationIds?: string[];
 }
 
 @InputType()

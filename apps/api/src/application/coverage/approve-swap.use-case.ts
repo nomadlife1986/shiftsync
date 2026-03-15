@@ -7,6 +7,7 @@ import { REALTIME_SERVICE, IRealtimeService } from '../common/interfaces';
 import { SwapRequestEntity } from '../../domain/coverage/entities/swap-request.entity';
 import { NotificationEntity } from '../../domain/notification/entities/notification.entity';
 import { randomUUID } from 'crypto';
+import { PrismaService } from '../../infrastructure/persistence/prisma/prisma.service';
 
 export interface ApproveSwapInput {
   swapId: string;
@@ -21,6 +22,7 @@ export class ApproveSwapUseCase implements IUseCase<ApproveSwapInput, SwapReques
     @Inject(ASSIGNMENT_REPOSITORY) private readonly assignmentRepo: IAssignmentRepository,
     @Inject(NOTIFICATION_REPOSITORY) private readonly notificationRepo: INotificationRepository,
     @Inject(REALTIME_SERVICE) private readonly realtimeService: IRealtimeService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async execute(input: ApproveSwapInput): Promise<SwapRequestEntity> {
@@ -29,36 +31,16 @@ export class ApproveSwapUseCase implements IUseCase<ApproveSwapInput, SwapReques
 
     swap.approve(input.managerId, input.note);
 
-    // Perform the actual swap of assignments
+    let requesterAssignment: any = null;
     if (swap.targetId) {
       const assignments = await this.assignmentRepo.findByShiftId(swap.shiftId);
-      const requesterAssignment = assignments.find(
+      requesterAssignment = assignments.find(
         (a) => a.userId === swap.requesterId && a.isActive(),
       );
       if (!requesterAssignment) {
         throw new BadRequestException('Requester no longer has an active assignment');
       }
-
-      // Remove requester's assignment and create one for target
-      requesterAssignment.markCancelled();
-      await this.assignmentRepo.save(requesterAssignment);
-
-      // Create new assignment for target
-      const { AssignmentEntity } = await import('../../domain/scheduling/entities/assignment.entity');
-      const newAssignment = AssignmentEntity.create(
-        {
-          shiftId: swap.shiftId,
-          userId: swap.targetId,
-          status: 'ASSIGNED',
-          assignedBy: input.managerId,
-          assignedAt: new Date(),
-        },
-        randomUUID(),
-      );
-      await this.assignmentRepo.save(newAssignment);
     }
-
-    const saved = await this.swapRepo.save(swap);
 
     // Notify requester
     const requesterNotification = NotificationEntity.create(
@@ -67,35 +49,105 @@ export class ApproveSwapUseCase implements IUseCase<ApproveSwapInput, SwapReques
         type: 'SWAP_REQUEST_APPROVED',
         title: 'Swap Approved',
         message: 'Your swap request has been approved by a manager',
-        data: { swapId: saved.id, shiftId: swap.shiftId },
+        data: { swapId: swap.id, shiftId: swap.shiftId },
         isRead: false,
         createdAt: new Date(),
       },
       randomUUID(),
     );
-    await this.notificationRepo.save(requesterNotification);
+
+    let targetNotification: NotificationEntity | null = null;
+    if (swap.targetId) {
+      targetNotification = NotificationEntity.create(
+        {
+          userId: swap.targetId,
+          type: 'SWAP_REQUEST_APPROVED',
+          title: 'Swap Approved',
+          message: 'The swap request has been approved. You are now assigned to this shift.',
+          data: { swapId: swap.id, shiftId: swap.shiftId },
+          isRead: false,
+          createdAt: new Date(),
+        },
+        randomUUID(),
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      if (swap.targetId && requesterAssignment) {
+        await tx.assignment.update({
+          where: { id: requesterAssignment.id },
+          data: { status: 'CANCELLED', assignedBy: requesterAssignment.assignedBy },
+        });
+
+        const existingByPair = await tx.assignment.findFirst({
+          where: { shiftId: swap.shiftId, userId: swap.targetId },
+        });
+        if (existingByPair) {
+          await tx.assignment.update({
+            where: { id: existingByPair.id },
+            data: { status: 'ASSIGNED', assignedBy: input.managerId },
+          });
+        } else {
+          await tx.assignment.create({
+            data: {
+              id: randomUUID(),
+              shiftId: swap.shiftId,
+              userId: swap.targetId,
+              status: 'ASSIGNED',
+              assignedBy: input.managerId,
+            },
+          });
+        }
+      }
+
+      await tx.swapRequest.update({
+        where: { id: swap.id },
+        data: {
+          status: swap.status as any,
+          targetAccepted: swap.targetAccepted,
+          managerApproved: swap.managerApproved,
+          managerId: swap.managerId,
+          managerNote: swap.managerNote,
+          cancelledBy: swap.cancelledBy,
+          cancelReason: swap.cancelReason,
+        },
+      });
+
+      await tx.notification.create({
+        data: {
+          id: requesterNotification.id,
+          userId: requesterNotification.userId,
+          type: requesterNotification.type as any,
+          title: requesterNotification.title,
+          message: requesterNotification.message,
+          data: requesterNotification.data as any,
+          isRead: requesterNotification.isRead,
+          createdAt: requesterNotification.createdAt,
+        },
+      });
+      if (targetNotification) {
+        await tx.notification.create({
+          data: {
+            id: targetNotification.id,
+            userId: targetNotification.userId,
+            type: targetNotification.type as any,
+            title: targetNotification.title,
+            message: targetNotification.message,
+            data: targetNotification.data as any,
+            isRead: targetNotification.isRead,
+            createdAt: targetNotification.createdAt,
+          },
+        });
+      }
+    });
+
     this.realtimeService.emitNotification(swap.requesterId, {
       id: requesterNotification.id,
       type: requesterNotification.type,
       title: requesterNotification.title,
       message: requesterNotification.message,
     });
-
-    // Notify target if exists
-    if (swap.targetId) {
-      const targetNotification = NotificationEntity.create(
-        {
-          userId: swap.targetId,
-          type: 'SWAP_REQUEST_APPROVED',
-          title: 'Swap Approved',
-          message: 'The swap request has been approved. You are now assigned to this shift.',
-          data: { swapId: saved.id, shiftId: swap.shiftId },
-          isRead: false,
-          createdAt: new Date(),
-        },
-        randomUUID(),
-      );
-      await this.notificationRepo.save(targetNotification);
+    if (targetNotification && swap.targetId) {
       this.realtimeService.emitNotification(swap.targetId, {
         id: targetNotification.id,
         type: targetNotification.type,
@@ -104,6 +156,6 @@ export class ApproveSwapUseCase implements IUseCase<ApproveSwapInput, SwapReques
       });
     }
 
-    return saved;
+    return this.swapRepo.findById(swap.id) as Promise<SwapRequestEntity>;
   }
 }

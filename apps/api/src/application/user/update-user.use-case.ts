@@ -10,6 +10,8 @@ export interface UpdateUserInput {
   phone?: string;
   desiredWeeklyHours?: number;
   skills?: string[];
+  certifiedLocationIds?: string[];
+  managedLocationIds?: string[];
 }
 
 @Injectable()
@@ -28,6 +30,12 @@ export class UpdateUserUseCase implements IUseCase<UpdateUserInput, UserEntity> 
     if (input.skills !== undefined) {
       // Reset skills and re-add (normalise to lowercase to match DB convention)
       (user as any).props.skills = input.skills.map((s: string) => s.toLowerCase());
+    }
+    if (input.certifiedLocationIds !== undefined && user.isStaff()) {
+      user.syncCertifications(input.certifiedLocationIds);
+    }
+    if (input.managedLocationIds !== undefined && user.isManager()) {
+      user.setManagedLocations(input.managedLocationIds);
     }
     return this.userRepo.save(user);
   }

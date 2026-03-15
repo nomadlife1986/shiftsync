@@ -9,6 +9,7 @@ import { CoverageEligibilityService } from '../../domain/coverage/services/cover
 import { DropRequestEntity } from '../../domain/coverage/entities/drop-request.entity';
 import { NotificationEntity } from '../../domain/notification/entities/notification.entity';
 import { randomUUID } from 'crypto';
+import { PrismaService } from '../../infrastructure/persistence/prisma/prisma.service';
 
 export interface PickupDropInput {
   dropId: string;
@@ -25,6 +26,7 @@ export class PickupDropUseCase implements IUseCase<PickupDropInput, DropRequestE
     @Inject(USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(NOTIFICATION_REPOSITORY) private readonly notificationRepo: INotificationRepository,
     @Inject(REALTIME_SERVICE) private readonly realtimeService: IRealtimeService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async execute(input: PickupDropInput): Promise<DropRequestEntity> {
@@ -49,7 +51,6 @@ export class PickupDropUseCase implements IUseCase<PickupDropInput, DropRequestE
     }
 
     drop.pickup(input.userId);
-    const saved = await this.dropRepo.save(drop);
 
     // Notify requester
     const notification = NotificationEntity.create(
@@ -58,13 +59,36 @@ export class PickupDropUseCase implements IUseCase<PickupDropInput, DropRequestE
         type: 'DROP_REQUEST_PICKED_UP',
         title: 'Drop Picked Up',
         message: `${user.fullName} has picked up your shift. Pending manager approval.`,
-        data: { dropId: saved.id, shiftId: drop.shiftId, pickedUpBy: input.userId },
+        data: { dropId: drop.id, shiftId: drop.shiftId, pickedUpBy: input.userId },
         isRead: false,
         createdAt: new Date(),
       },
-      randomUUID(),
+        randomUUID(),
     );
-    await this.notificationRepo.save(notification);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.dropRequest.update({
+        where: { id: drop.id },
+        data: {
+          status: drop.status as any,
+          pickedUpById: drop.pickedUpById,
+          managerId: drop.managerId,
+          managerNote: drop.managerNote,
+          expiresAt: drop.expiresAt,
+        },
+      });
+      await tx.notification.create({
+        data: {
+          id: notification.id,
+          userId: notification.userId,
+          type: notification.type as any,
+          title: notification.title,
+          message: notification.message,
+          data: notification.data as any,
+          isRead: notification.isRead,
+          createdAt: notification.createdAt,
+        },
+      });
+    });
     this.realtimeService.emitNotification(drop.requesterId, {
       id: notification.id,
       type: notification.type,
@@ -72,6 +96,6 @@ export class PickupDropUseCase implements IUseCase<PickupDropInput, DropRequestE
       message: notification.message,
     });
 
-    return saved;
+    return this.dropRepo.findById(drop.id) as Promise<DropRequestEntity>;
   }
 }

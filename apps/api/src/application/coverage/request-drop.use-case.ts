@@ -7,6 +7,7 @@ import { IUserRepository, USER_REPOSITORY } from '../../domain/user/repositories
 import { CoverageEligibilityService } from '../../domain/coverage/services/coverage-eligibility.domain-service';
 import { DropRequestEntity } from '../../domain/coverage/entities/drop-request.entity';
 import { randomUUID } from 'crypto';
+import { PrismaService } from '../../infrastructure/persistence/prisma/prisma.service';
 
 export interface RequestDropInput {
   shiftId: string;
@@ -22,6 +23,7 @@ export class RequestDropUseCase implements IUseCase<RequestDropInput, DropReques
     @Inject(SHIFT_REPOSITORY) private readonly shiftRepo: IShiftRepository,
     @Inject(ASSIGNMENT_REPOSITORY) private readonly assignmentRepo: IAssignmentRepository,
     @Inject(USER_REPOSITORY) private readonly userRepo: IUserRepository,
+    private readonly prisma: PrismaService,
   ) {}
 
   async execute(input: RequestDropInput): Promise<DropRequestEntity> {
@@ -62,10 +64,35 @@ export class RequestDropUseCase implements IUseCase<RequestDropInput, DropReques
       randomUUID(),
     );
 
-    // Mark the user's assignment as dropped
     userAssignment.markDropped();
-    await this.assignmentRepo.save(userAssignment);
+    await this.prisma.$transaction(async (tx) => {
+      const existingAssignment = await tx.assignment.findFirst({
+        where: { shiftId: userAssignment.shiftId, userId: userAssignment.userId },
+      });
+      if (!existingAssignment) {
+        throw new BadRequestException('Assignment no longer exists');
+      }
 
-    return this.dropRepo.save(drop);
+      await tx.assignment.update({
+        where: { id: existingAssignment.id },
+        data: { status: userAssignment.status as any, assignedBy: userAssignment.assignedBy },
+      });
+
+      await tx.dropRequest.create({
+        data: {
+          id: drop.id,
+          shiftId: drop.shiftId,
+          requesterId: drop.requesterId,
+          status: drop.status as any,
+          pickedUpById: drop.pickedUpById,
+          managerId: drop.managerId,
+          managerNote: drop.managerNote,
+          expiresAt: drop.expiresAt,
+          createdAt: drop.createdAt,
+        },
+      });
+    });
+
+    return this.dropRepo.findById(drop.id) as Promise<DropRequestEntity>;
   }
 }

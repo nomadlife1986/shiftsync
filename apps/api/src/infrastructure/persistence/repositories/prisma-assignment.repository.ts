@@ -41,18 +41,22 @@ export class PrismaAssignmentRepository implements IAssignmentRepository {
   }
 
   async save(assignment: AssignmentEntity): Promise<AssignmentEntity> {
-    const existing = await this.prisma.assignment.findUnique({ where: { id: assignment.id } });
     const data = {
       shiftId: assignment.shiftId,
       userId: assignment.userId,
       status: assignment.status as any,
       assignedBy: assignment.assignedBy,
     };
-    if (!existing) {
-      await this.prisma.assignment.create({ data: { ...data, id: assignment.id } });
-    } else {
-      await this.prisma.assignment.update({ where: { id: assignment.id }, data });
+    // Always check by (shiftId, userId) first — a cancelled record may already exist
+    // from a previous unassign, and the schema has a unique constraint on that pair.
+    const existingByPair = await this.prisma.assignment.findFirst({
+      where: { shiftId: assignment.shiftId, userId: assignment.userId },
+    });
+    if (existingByPair) {
+      await this.prisma.assignment.update({ where: { id: existingByPair.id }, data });
+      return this.findById(existingByPair.id) as Promise<AssignmentEntity>;
     }
+    await this.prisma.assignment.create({ data: { ...data, id: assignment.id } });
     return this.findById(assignment.id) as Promise<AssignmentEntity>;
   }
 

@@ -11,6 +11,7 @@ import { DeleteShiftUseCase } from '../application/scheduling/delete-shift.use-c
 import { AssignStaffUseCase } from '../application/scheduling/assign-staff.use-case';
 import { UnassignStaffUseCase } from '../application/scheduling/unassign-staff.use-case';
 import { PublishScheduleUseCase } from '../application/scheduling/publish-schedule.use-case';
+import { PublishShiftUseCase } from '../application/scheduling/publish-shift.use-case';
 import { UnpublishScheduleUseCase } from '../application/scheduling/unpublish-schedule.use-case';
 import { GetWeekScheduleUseCase } from '../application/scheduling/get-week-schedule.use-case';
 import { WhatIfAssignmentUseCase } from '../application/scheduling/what-if-assignment.use-case';
@@ -33,6 +34,7 @@ import { UserModule } from './user.module';
     AssignStaffUseCase,
     UnassignStaffUseCase,
     PublishScheduleUseCase,
+    PublishShiftUseCase,
     UnpublishScheduleUseCase,
     GetWeekScheduleUseCase,
     WhatIfAssignmentUseCase,

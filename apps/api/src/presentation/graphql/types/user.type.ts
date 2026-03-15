@@ -20,6 +20,8 @@ export class UserType {
   @Field({ nullable: true }) phone?: string;
   @Field(() => Float, { nullable: true }) desiredWeeklyHours?: number;
   @Field(() => [String]) skills!: string[];
+  @Field(() => [ID]) certifiedLocationIds!: string[];
+  @Field(() => [ID]) managedLocationIds!: string[];
   @Field(() => [AvailabilityType]) availability!: AvailabilityType[];
   @Field() createdAt!: Date;
   @Field() updatedAt!: Date;

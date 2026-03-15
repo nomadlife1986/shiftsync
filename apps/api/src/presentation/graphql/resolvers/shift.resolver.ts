@@ -13,6 +13,7 @@ import { UnassignStaffUseCase } from '../../../application/scheduling/unassign-s
 import { WhatIfAssignmentUseCase } from '../../../application/scheduling/what-if-assignment.use-case';
 import { GetWeekScheduleUseCase } from '../../../application/scheduling/get-week-schedule.use-case';
 import { PublishScheduleUseCase } from '../../../application/scheduling/publish-schedule.use-case';
+import { PublishShiftUseCase } from '../../../application/scheduling/publish-shift.use-case';
 import { UnpublishScheduleUseCase } from '../../../application/scheduling/unpublish-schedule.use-case';
 import { GetShiftHistoryUseCase } from '../../../application/audit/get-shift-history.use-case';
 import { ShiftEntity } from '../../../domain/scheduling/entities/shift.entity';
@@ -32,6 +33,7 @@ export class ShiftResolver {
     private whatIfAssignmentUc: WhatIfAssignmentUseCase,
     private getWeekSchedule: GetWeekScheduleUseCase,
     private publishScheduleUc: PublishScheduleUseCase,
+    private publishShiftUc: PublishShiftUseCase,
     private unpublishScheduleUc: UnpublishScheduleUseCase,
     private getShiftHistory: GetShiftHistoryUseCase,
     @Inject(SHIFT_REPOSITORY) private shiftRepo: IShiftRepository,
@@ -53,6 +55,17 @@ export class ShiftResolver {
         this.toShiftType(swa.shift, swa.assignments.map(a => this.toAssignmentType(a.assignment))),
       ),
     };
+  }
+
+  @Query(() => [ShiftType])
+  async myShifts(@CurrentUser() user: { id: string }): Promise<ShiftType[]> {
+    const now = new Date();
+    const future = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+    const assignments = await this.assignmentRepo.findByUserId(user.id, { start: now, end: future });
+    if (assignments.length === 0) return [];
+    const shiftIds = assignments.map(a => a.shiftId);
+    const shifts = await this.shiftRepo.findByIds(shiftIds);
+    return shifts.map(s => this.toShiftType(s));
   }
 
   @Query(() => ShiftType)
@@ -166,6 +179,15 @@ export class ShiftResolver {
   ): Promise<boolean> {
     await this.publishScheduleUc.execute({ locationId, weekStart: week, publishedBy: user.id });
     return true;
+  }
+
+  @Mutation(() => ShiftType)
+  async publishShift(
+    @Args('id', { type: () => ID }) id: string,
+    @CurrentUser() user: { id: string },
+  ): Promise<ShiftType> {
+    const shift = await this.publishShiftUc.execute({ shiftId: id, publishedBy: user.id });
+    return this.toShiftType(shift);
   }
 
   @Mutation(() => Boolean)

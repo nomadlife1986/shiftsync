@@ -99,33 +99,79 @@ export class PrismaUserRepository implements IUserRepository {
   }
 
   async save(user: UserEntity): Promise<UserEntity> {
-    const existing = await this.prisma.user.findUnique({ where: { id: user.id } });
-    const data = {
-      email: user.email,
-      passwordHash: user.passwordHash,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      role: user.role as any,
-      phone: user.phone ?? null,
-      desiredWeeklyHours: user.desiredWeeklyHours ?? null,
-    };
-    if (!existing) {
-      await this.prisma.user.create({ data: { ...data, id: user.id, createdAt: user.createdAt } });
-    } else {
-      await this.prisma.user.update({ where: { id: user.id }, data });
-    }
-    // Sync skills
-    if (user.skills) {
-      await this.prisma.staffSkill.deleteMany({ where: { userId: user.id } });
-      if (user.skills.length > 0) {
-        await this.prisma.staffSkill.createMany({ data: user.skills.map(s => ({ userId: user.id, skill: s as any })) });
+    await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.user.findUnique({ where: { id: user.id } });
+      const data = {
+        email: user.email,
+        passwordHash: user.passwordHash,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role as any,
+        phone: user.phone ?? null,
+        desiredWeeklyHours: user.desiredWeeklyHours ?? null,
+      };
+      if (!existing) {
+        await tx.user.create({ data: { ...data, id: user.id, createdAt: user.createdAt } });
+      } else {
+        await tx.user.update({ where: { id: user.id }, data });
       }
-    }
-    // Sync availability
-    if (user.availabilities) {
-      await this.prisma.availability.deleteMany({ where: { userId: user.id } });
+
+      await tx.staffSkill.deleteMany({ where: { userId: user.id } });
+      if (user.skills.length > 0) {
+        await tx.staffSkill.createMany({ data: user.skills.map(s => ({ userId: user.id, skill: s as any })) });
+      }
+
+      const desiredCertifications = user.certifications;
+      const activeLocationIds = desiredCertifications
+        .filter((certification) => certification.revokedAt === null)
+        .map((certification) => certification.locationId);
+      const existingCertifications = await tx.staffCertification.findMany({ where: { userId: user.id } });
+      const existingByLocation = new Map(existingCertifications.map((certification) => [certification.locationId, certification]));
+
+      for (const certification of existingCertifications) {
+        if (!activeLocationIds.includes(certification.locationId) && certification.revokedAt === null) {
+          await tx.staffCertification.update({
+            where: { id: certification.id },
+            data: { revokedAt: new Date() },
+          });
+        }
+      }
+
+      for (const certification of desiredCertifications.filter((entry) => entry.revokedAt === null)) {
+        const existingCertification = existingByLocation.get(certification.locationId);
+        if (!existingCertification) {
+          await tx.staffCertification.create({
+            data: {
+              userId: user.id,
+              locationId: certification.locationId,
+              certifiedAt: certification.certifiedAt,
+              revokedAt: null,
+            },
+          });
+          continue;
+        }
+
+        if (existingCertification.revokedAt !== null || existingCertification.certifiedAt.getTime() !== certification.certifiedAt.getTime()) {
+          await tx.staffCertification.update({
+            where: { id: existingCertification.id },
+            data: {
+              certifiedAt: certification.certifiedAt,
+              revokedAt: null,
+            },
+          });
+        }
+      }
+
+      await tx.managerLocation.deleteMany({ where: { userId: user.id } });
+      if (user.managedLocationIds.length > 0) {
+        await tx.managerLocation.createMany({
+          data: user.managedLocationIds.map((locationId) => ({ userId: user.id, locationId })),
+        });
+      }
+
+      await tx.availability.deleteMany({ where: { userId: user.id } });
       if (user.availabilities.length > 0) {
-        await this.prisma.availability.createMany({
+        await tx.availability.createMany({
           data: user.availabilities.map(a => ({
             userId: user.id,
             dayOfWeek: a.dayOfWeek,
@@ -137,7 +183,7 @@ export class PrismaUserRepository implements IUserRepository {
           })),
         });
       }
-    }
+    });
     return this.findById(user.id) as Promise<UserEntity>;
   }
 

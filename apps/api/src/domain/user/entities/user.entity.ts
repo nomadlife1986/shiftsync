@@ -110,6 +110,39 @@ export class UserEntity extends AggregateRoot<UserProps> {
     }
   }
 
+  syncCertifications(locationIds: string[]): void {
+    const nextIds = new Set(locationIds);
+    const currentIds = new Set(this.props.certifications.map((certification) => certification.locationId));
+
+    for (const certification of this.props.certifications) {
+      if (!nextIds.has(certification.locationId) && certification.revokedAt === null) {
+        certification.revokedAt = new Date();
+      }
+    }
+
+    for (const locationId of nextIds) {
+      if (!currentIds.has(locationId)) {
+        this.props.certifications.push({
+          locationId,
+          certifiedAt: new Date(),
+          revokedAt: null,
+        });
+        continue;
+      }
+
+      const existing = this.props.certifications.find((certification) => certification.locationId === locationId);
+      if (existing && existing.revokedAt !== null) {
+        existing.revokedAt = null;
+        existing.certifiedAt = new Date();
+      }
+    }
+  }
+
+  setManagedLocations(locationIds: string[]): void {
+    this.props.managedLocationIds = [...new Set(locationIds)];
+    this.props.updatedAt = new Date();
+  }
+
   setAvailability(windows: AvailabilityWindow[]): void {
     this.props.availabilities = windows;
     this.addDomainEvent(new AvailabilityChangedEvent(this.id));

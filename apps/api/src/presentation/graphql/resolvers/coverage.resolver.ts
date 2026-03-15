@@ -16,6 +16,7 @@ import { RejectDropUseCase } from '../../../application/coverage/reject-drop.use
 import { CancelDropUseCase } from '../../../application/coverage/cancel-drop.use-case';
 import { ISwapRequestRepository, SWAP_REQUEST_REPOSITORY } from '../../../domain/coverage/repositories/swap-request.repository.interface';
 import { IDropRequestRepository, DROP_REQUEST_REPOSITORY } from '../../../domain/coverage/repositories/drop-request.repository.interface';
+import { IShiftRepository, SHIFT_REPOSITORY } from '../../../domain/scheduling/repositories/shift.repository.interface';
 
 @Resolver()
 @UseGuards(JwtAuthGuard)
@@ -33,12 +34,18 @@ export class CoverageResolver {
     private cancelDropUc: CancelDropUseCase,
     @Inject(SWAP_REQUEST_REPOSITORY) private swapRepo: ISwapRequestRepository,
     @Inject(DROP_REQUEST_REPOSITORY) private dropRepo: IDropRequestRepository,
+    @Inject(SHIFT_REPOSITORY) private shiftRepo: IShiftRepository,
   ) {}
 
   // ── Queries ──────────────────────────────────────────────────────────────
 
   @Query(() => [SwapRequestType])
-  async swapRequests(@CurrentUser() user: { id: string }): Promise<SwapRequestType[]> {
+  async swapRequests(@CurrentUser() user: { id: string; role: string }): Promise<SwapRequestType[]> {
+    const isManager = user.role === 'ADMIN' || user.role === 'MANAGER';
+    if (isManager) {
+      const all = await this.swapRepo.findAll();
+      return this.toSwapTypes(all);
+    }
     const [asRequester, asTarget] = await Promise.all([
       this.swapRepo.findByRequesterId(user.id),
       this.swapRepo.findByTargetId(user.id),
@@ -49,13 +56,16 @@ export class CoverageResolver {
       seen.add(s.id);
       return true;
     });
-    return combined.map(s => this.toSwapType(s));
+    return this.toSwapTypes(combined);
   }
 
   @Query(() => [DropRequestType])
-  async dropRequests(@CurrentUser() user: { id: string }): Promise<DropRequestType[]> {
-    const drops = await this.dropRepo.findByRequesterId(user.id);
-    return drops.map(d => this.toDropType(d));
+  async dropRequests(@CurrentUser() user: { id: string; role: string }): Promise<DropRequestType[]> {
+    const isManager = user.role === 'ADMIN' || user.role === 'MANAGER';
+    const drops = isManager
+      ? await this.dropRepo.findAll()
+      : await this.dropRepo.findByRequesterId(user.id);
+    return this.toDropTypes(drops);
   }
 
   @Query(() => [DropRequestType])
@@ -63,7 +73,7 @@ export class CoverageResolver {
     @Args('locationId', { type: () => ID, nullable: true }) locationId?: string,
   ): Promise<DropRequestType[]> {
     const drops = await this.dropRepo.findAvailable(locationId);
-    return drops.map(d => this.toDropType(d));
+    return this.toDropTypes(drops);
   }
 
   // ── Swap Mutations ────────────────────────────────────────────────────────
@@ -181,6 +191,14 @@ export class CoverageResolver {
     };
   }
 
+  private async toSwapTypes(swaps: any[]): Promise<SwapRequestType[]> {
+    const shiftMap = await this.loadShiftMap(swaps.map((swap) => swap.shiftId));
+    return swaps.map((swap) => ({
+      ...this.toSwapType(swap),
+      shift: shiftMap.get(swap.shiftId),
+    }));
+  }
+
   private toDropType(d: any): DropRequestType {
     return {
       id: d.id,
@@ -194,5 +212,40 @@ export class CoverageResolver {
       createdAt: d.createdAt,
       updatedAt: d.updatedAt,
     };
+  }
+
+  private async toDropTypes(drops: any[]): Promise<DropRequestType[]> {
+    const shiftMap = await this.loadShiftMap(drops.map((drop) => drop.shiftId));
+    return drops.map((drop) => ({
+      ...this.toDropType(drop),
+      shift: shiftMap.get(drop.shiftId),
+    }));
+  }
+
+  private async loadShiftMap(shiftIds: string[]): Promise<Map<string, any>> {
+    const uniqueShiftIds = [...new Set(shiftIds.filter(Boolean))];
+    if (uniqueShiftIds.length === 0) return new Map();
+
+    const shifts = await this.shiftRepo.findByIds(uniqueShiftIds);
+    return new Map(
+      shifts.map((shift) => [
+        shift.id,
+        {
+          id: shift.id,
+          locationId: shift.locationId,
+          startTime: shift.startTime,
+          endTime: shift.endTime,
+          requiredSkill: shift.requiredSkill,
+          headcount: shift.headcount,
+          status: shift.status,
+          scheduleWeek: shift.scheduleWeek ?? undefined,
+          publishedAt: shift.publishedAt ?? undefined,
+          editCutoffHours: shift.editCutoffHours,
+          assignments: [],
+          createdAt: shift.createdAt,
+          updatedAt: shift.updatedAt,
+        },
+      ]),
+    );
   }
 }

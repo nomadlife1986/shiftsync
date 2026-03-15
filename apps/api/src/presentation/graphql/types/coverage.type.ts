@@ -1,9 +1,11 @@
 import { ObjectType, Field, ID } from '@nestjs/graphql';
+import { ShiftType } from './shift.type';
 
 @ObjectType()
 export class SwapRequestType {
   @Field(() => ID) id!: string;
   @Field() shiftId!: string;
+  @Field(() => ShiftType, { nullable: true }) shift?: ShiftType;
   @Field() requesterId!: string;
   @Field({ nullable: true }) targetId?: string;
   @Field() status!: string;
@@ -20,6 +22,7 @@ export class SwapRequestType {
 export class DropRequestType {
   @Field(() => ID) id!: string;
   @Field() shiftId!: string;
+  @Field(() => ShiftType, { nullable: true }) shift?: ShiftType;
   @Field() requesterId!: string;
   @Field() status!: string;
   @Field({ nullable: true }) pickedUpById?: string;

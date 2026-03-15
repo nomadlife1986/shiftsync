@@ -202,7 +202,7 @@ export class AssignStaffUseCase implements IUseCase<AssignStaffInput, Assignment
     return {
       success: true,
       assignmentId: assignment.id,
-      violations: constraintViolations.length > 0 ? constraintViolations : undefined,
+      violations: softWarnings.length > 0 ? softWarnings : undefined,
       overtimeWarnings: overtimeResult.warnings.length > 0 ? overtimeResult.warnings : undefined,
     };
   }

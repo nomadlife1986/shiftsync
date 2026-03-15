@@ -84,6 +84,10 @@ export class UserResolver {
       phone: u.phone ?? undefined,
       desiredWeeklyHours: u.desiredWeeklyHours ?? undefined,
       skills: u.skills ?? [],
+      certifiedLocationIds: (u.certifications ?? [])
+        .filter((certification: any) => !certification.revokedAt)
+        .map((certification: any) => certification.locationId),
+      managedLocationIds: u.managedLocationIds ?? [],
       availability: u.availabilities ?? [],
       createdAt: u.createdAt,
       updatedAt: u.updatedAt,

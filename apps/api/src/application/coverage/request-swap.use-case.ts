@@ -10,6 +10,7 @@ import { CoverageEligibilityService } from '../../domain/coverage/services/cover
 import { SwapRequestEntity } from '../../domain/coverage/entities/swap-request.entity';
 import { NotificationEntity } from '../../domain/notification/entities/notification.entity';
 import { randomUUID } from 'crypto';
+import { PrismaService } from '../../infrastructure/persistence/prisma/prisma.service';
 
 export interface RequestSwapInput {
   shiftId: string;
@@ -28,6 +29,7 @@ export class RequestSwapUseCase implements IUseCase<RequestSwapInput, SwapReques
     @Inject(USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(NOTIFICATION_REPOSITORY) private readonly notificationRepo: INotificationRepository,
     @Inject(REALTIME_SERVICE) private readonly realtimeService: IRealtimeService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async execute(input: RequestSwapInput): Promise<SwapRequestEntity> {
@@ -74,23 +76,56 @@ export class RequestSwapUseCase implements IUseCase<RequestSwapInput, SwapReques
       randomUUID(),
     );
 
-    const saved = await this.swapRepo.save(swap);
-
-    // Notify target or managers
+    let notification: NotificationEntity | null = null;
     if (input.targetId) {
-      const notification = NotificationEntity.create(
+      notification = NotificationEntity.create(
         {
           userId: input.targetId,
           type: 'SWAP_REQUEST_RECEIVED',
           title: 'Swap Request',
           message: `${requester.fullName} wants to swap a shift with you`,
-          data: { swapId: saved.id, shiftId: input.shiftId },
+          data: { swapId: swap.id, shiftId: input.shiftId },
           isRead: false,
           createdAt: new Date(),
         },
         randomUUID(),
       );
-      await this.notificationRepo.save(notification);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.swapRequest.create({
+        data: {
+          id: swap.id,
+          shiftId: swap.shiftId,
+          requesterId: swap.requesterId,
+          targetId: swap.targetId,
+          status: swap.status as any,
+          targetAccepted: swap.targetAccepted,
+          managerApproved: swap.managerApproved,
+          managerId: swap.managerId,
+          managerNote: swap.managerNote,
+          cancelledBy: swap.cancelledBy,
+          cancelReason: swap.cancelReason,
+          createdAt: swap.createdAt,
+        },
+      });
+      if (notification) {
+        await tx.notification.create({
+          data: {
+            id: notification.id,
+            userId: notification.userId,
+            type: notification.type as any,
+            title: notification.title,
+            message: notification.message,
+            data: notification.data as any,
+            isRead: notification.isRead,
+            createdAt: notification.createdAt,
+          },
+        });
+      }
+    });
+
+    if (notification && input.targetId) {
       this.realtimeService.emitNotification(input.targetId, {
         id: notification.id,
         type: notification.type,
@@ -99,6 +134,6 @@ export class RequestSwapUseCase implements IUseCase<RequestSwapInput, SwapReques
       });
     }
 
-    return saved;
+    return this.swapRepo.findById(swap.id) as Promise<SwapRequestEntity>;
   }
 }

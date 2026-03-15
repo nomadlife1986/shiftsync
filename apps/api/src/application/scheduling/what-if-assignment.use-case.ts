@@ -67,7 +67,9 @@ export class WhatIfAssignmentUseCase implements IUseCase<WhatIfInput, WhatIfOutp
       locationTimezone: location.timezone,
     });
 
-    const violations = validationResult.isFailure ? validationResult.error : validationResult.value;
+    // With severity system: isFailure = hard errors present; isSuccess = only soft warnings (or none)
+    const canPassConstraints = validationResult.isSuccess;
+    const violations = validationResult.isFailure ? validationResult.error : (validationResult.value ?? []);
 
     // Run overtime check including proposed assignment
     const shiftTimes = allUserShifts
@@ -77,9 +79,9 @@ export class WhatIfAssignmentUseCase implements IUseCase<WhatIfInput, WhatIfOutp
 
     const overtimeResult = this.overtimeCalculator.calculate({ assignments: shiftTimes, weekStart });
 
-    // Get suggestions if there are violations
+    // Get suggestions if there are hard violations
     let suggestions: StaffSuggestion[] = [];
-    if (violations.length > 0) {
+    if (!canPassConstraints) {
       const availableStaff = await this.userRepo.findStaffByLocationAndSkill(
         shift.locationId,
         shift.requiredSkill,
@@ -97,7 +99,7 @@ export class WhatIfAssignmentUseCase implements IUseCase<WhatIfInput, WhatIfOutp
     }
 
     return {
-      canAssign: violations.length === 0 && overtimeResult.blocks.length === 0,
+      canAssign: canPassConstraints && overtimeResult.blocks.length === 0,
       violations,
       overtimeWarnings: [...overtimeResult.warnings, ...overtimeResult.blocks],
       suggestions,
