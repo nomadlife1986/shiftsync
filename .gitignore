@@ -40,7 +40,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 # ─── Testing & coverage ──────────────────────────────────────────────────────
-coverage
+/coverage
 *.lcov
 .nyc_output
 /test-results/
