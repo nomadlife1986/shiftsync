@@ -10,6 +10,8 @@ export const GET_ME = gql`
       role
       phone
       skills
+      certifiedLocationIds
+      managedLocationIds
       desiredWeeklyHours
       availability {
         dayOfWeek
@@ -34,6 +36,8 @@ export const GET_USERS = gql`
       role
       phone
       skills
+      certifiedLocationIds
+      managedLocationIds
       desiredWeeklyHours
       createdAt
     }
@@ -50,6 +54,8 @@ export const GET_USER = gql`
       role
       phone
       skills
+      certifiedLocationIds
+      managedLocationIds
       desiredWeeklyHours
       availability {
         dayOfWeek
@@ -156,6 +162,20 @@ export const GET_SHIFT = gql`
   }
 `;
 
+export const GET_MY_SHIFTS = gql`
+  query GetMyShifts {
+    myShifts {
+      id
+      locationId
+      startTime
+      endTime
+      requiredSkill
+      status
+      headcount
+    }
+  }
+`;
+
 export const GET_SHIFT_HISTORY = gql`
   query GetShiftHistory($shiftId: ID!) {
     shiftHistory(shiftId: $shiftId) {
@@ -174,6 +194,20 @@ export const GET_SWAP_REQUESTS = gql`
     swapRequests {
       id
       shiftId
+      shift {
+        id
+        locationId
+        startTime
+        endTime
+        requiredSkill
+        headcount
+        status
+        scheduleWeek
+        publishedAt
+        editCutoffHours
+        createdAt
+        updatedAt
+      }
       requesterId
       targetId
       status
@@ -193,6 +227,20 @@ export const GET_DROP_REQUESTS = gql`
     dropRequests {
       id
       shiftId
+      shift {
+        id
+        locationId
+        startTime
+        endTime
+        requiredSkill
+        headcount
+        status
+        scheduleWeek
+        publishedAt
+        editCutoffHours
+        createdAt
+        updatedAt
+      }
       requesterId
       status
       pickedUpById
@@ -210,6 +258,20 @@ export const GET_AVAILABLE_DROPS = gql`
     availableDrops(locationId: $locationId) {
       id
       shiftId
+      shift {
+        id
+        locationId
+        startTime
+        endTime
+        requiredSkill
+        headcount
+        status
+        scheduleWeek
+        publishedAt
+        editCutoffHours
+        createdAt
+        updatedAt
+      }
       requesterId
       status
       expiresAt

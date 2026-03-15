@@ -12,8 +12,10 @@ import {
   Loader2,
   Phone,
   Pencil,
+  MapPin,
 } from 'lucide-react';
 import { Header } from '../../../components/layout/header';
+import { ErrorBanner } from '../../../components/ui/error-banner';
 import {
   Dialog,
   DialogContent,
@@ -22,9 +24,10 @@ import {
   DialogFooter,
   DialogClose,
 } from '../../../components/ui/dialog';
-import { GET_USERS } from '../../../lib/graphql/queries';
+import { GET_LOCATIONS, GET_USERS } from '../../../lib/graphql/queries';
 import { CREATE_USER, UPDATE_USER } from '../../../lib/graphql/mutations';
 import { useRoleGuard } from '../../../hooks/use-role-guard';
+import { formatAppError } from '../../../lib/utils';
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -115,6 +118,47 @@ function SkillPicker({
   );
 }
 
+function LocationPicker({
+  selected,
+  onChange,
+  locations,
+}: {
+  selected: string[];
+  onChange: (locationIds: string[]) => void;
+  locations: Array<{ id: string; name: string }>;
+}) {
+  function toggle(locationId: string) {
+    onChange(
+      selected.includes(locationId)
+        ? selected.filter((id) => id !== locationId)
+        : [...selected, locationId],
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {locations.map((location) => {
+        const active = selected.includes(location.id);
+        return (
+          <button
+            key={location.id}
+            type="button"
+            onClick={() => toggle(location.id)}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${
+              active
+                ? 'border-sky-600 bg-sky-600 text-white'
+                : 'border-gray-300 bg-white text-gray-600 hover:border-sky-400'
+            }`}
+          >
+            <MapPin className="h-3 w-3" />
+            {location.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Create User Dialog ───────────────────────────────────────────────────────
 
 interface CreateForm {
@@ -124,6 +168,7 @@ interface CreateForm {
   password: string;
   role: 'STAFF' | 'MANAGER';
   skills: Skill[];
+  locationIds: string[];
   desiredWeeklyHours: string;
 }
 
@@ -134,14 +179,17 @@ const EMPTY_CREATE: CreateForm = {
   password: '',
   role: 'STAFF',
   skills: [],
+  locationIds: [],
   desiredWeeklyHours: '',
 };
 
 function CreateUserDialog({
   open,
+  locations,
   onClose,
 }: {
   open: boolean;
+  locations: Array<{ id: string; name: string }>;
   onClose: () => void;
 }) {
   const [form, setForm] = useState<CreateForm>(EMPTY_CREATE);
@@ -170,6 +218,10 @@ function CreateUserDialog({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (form.locationIds.length === 0) {
+      setError(form.role === 'STAFF' ? 'Choose at least one certified location.' : 'Choose at least one managed location.');
+      return;
+    }
     createUser({
       variables: {
         input: {
@@ -179,6 +231,8 @@ function CreateUserDialog({
           password:  form.password,
           role:      form.role,
           skills:    form.skills.map(s => s.toLowerCase()),
+          certifiedLocationIds: form.role === 'STAFF' ? form.locationIds : undefined,
+          managedLocationIds: form.role === 'MANAGER' ? form.locationIds : undefined,
           desiredWeeklyHours: form.desiredWeeklyHours ? Number(form.desiredWeeklyHours) : undefined,
         },
       },
@@ -243,6 +297,17 @@ function CreateUserDialog({
             <SkillPicker selected={form.skills} onChange={(skills) => setForm(p => ({ ...p, skills }))} />
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              {form.role === 'STAFF' ? 'Certified Locations' : 'Managed Locations'}
+            </label>
+            <LocationPicker
+              selected={form.locationIds}
+              onChange={(locationIds) => setForm((p) => ({ ...p, locationIds }))}
+              locations={locations}
+            />
+          </div>
+
           {error && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
           )}
@@ -269,14 +334,17 @@ interface EditForm {
   lastName: string;
   phone: string;
   skills: Skill[];
+  locationIds: string[];
   desiredWeeklyHours: string;
 }
 
 function EditUserDialog({
   user,
+  locations,
   onClose,
 }: {
   user: any;
+  locations: Array<{ id: string; name: string }>;
   onClose: () => void;
 }) {
   // Normalise skills from backend (may be lowercase) to uppercase for the picker
@@ -285,6 +353,7 @@ function EditUserDialog({
     lastName:           user.lastName  ?? '',
     phone:              user.phone     ?? '',
     skills:             (user.skills ?? []).map(normaliseSkill),
+    locationIds:        user.role === 'STAFF' ? (user.certifiedLocationIds ?? []) : (user.managedLocationIds ?? []),
     desiredWeeklyHours: user.desiredWeeklyHours != null ? String(user.desiredWeeklyHours) : '',
   });
   const [error, setError] = useState<string | null>(null);
@@ -302,6 +371,10 @@ function EditUserDialog({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (form.locationIds.length === 0) {
+      setError(user.role === 'STAFF' ? 'Choose at least one certified location.' : 'Choose at least one managed location.');
+      return;
+    }
     updateUser({
       variables: {
         id: user.id,
@@ -310,6 +383,8 @@ function EditUserDialog({
           lastName:           form.lastName.trim(),
           phone:              form.phone.trim() || undefined,
           skills:             form.skills.map(s => s.toLowerCase()),
+          certifiedLocationIds: user.role === 'STAFF' ? form.locationIds : undefined,
+          managedLocationIds: user.role === 'MANAGER' ? form.locationIds : undefined,
           desiredWeeklyHours: form.desiredWeeklyHours ? Number(form.desiredWeeklyHours) : undefined,
         },
       },
@@ -348,6 +423,17 @@ function EditUserDialog({
               <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-0.5">Role</p>
               <p className="text-gray-600 font-medium">{user.role}</p>
             </div>
+          </div>
+
+          <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 text-sm">
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
+              {user.role === 'STAFF' ? 'Certified Locations' : 'Managed Locations'}
+            </p>
+            <LocationPicker
+              selected={form.locationIds}
+              onChange={(locationIds) => setForm((p) => ({ ...p, locationIds }))}
+              locations={locations}
+            />
           </div>
 
           <div>
@@ -393,8 +479,11 @@ export default function StaffPage() {
   const [editingUser, setEditingUser] = useState<any | null>(null);
   const [search, setSearch] = useState('');
 
-  const { data, loading } = useQuery(GET_USERS);
+  const { data, loading, error } = useQuery(GET_USERS);
+  const { data: locationData } = useQuery(GET_LOCATIONS);
   const allUsers: any[] = data?.users ?? [];
+  const locations: any[] = locationData?.locations ?? [];
+  const locationNameById = new Map(locations.map((location: any) => [location.id, location.name]));
 
   const staff = allUsers
     .filter((u) => u.role === 'STAFF' || u.role === 'MANAGER' || u.role === 'ADMIN')
@@ -412,6 +501,18 @@ export default function StaffPage() {
     return `${u.firstName?.[0] ?? ''}${u.lastName?.[0] ?? ''}`.toUpperCase();
   }
 
+  function getLocationIdsForUser(u: any) {
+    const certified = u.certifiedLocationIds ?? [];
+    const managed = u.managedLocationIds ?? [];
+    return u.role === 'STAFF' ? certified : managed;
+  }
+
+  function getLocationNamesForUser(u: any) {
+    return getLocationIdsForUser(u)
+      .map((id: string) => locationNameById.get(id))
+      .filter(Boolean);
+  }
+
   return (
     <div className="flex flex-col h-full">
       <Header
@@ -420,6 +521,14 @@ export default function StaffPage() {
       />
 
       <div className="flex-1 overflow-auto p-6">
+        {error && (
+          <ErrorBanner
+            className="mb-4"
+            title="Could not load team members"
+            message={formatAppError(error)}
+          />
+        )}
+
         {/* ── toolbar */}
         <div className="flex items-center justify-between gap-4 mb-6">
           <div className="relative flex-1 max-w-xs">
@@ -466,6 +575,9 @@ export default function StaffPage() {
                   </th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                     <span className="flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5" />Skills</span>
+                  </th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" />Locations</span>
                   </th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                     <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />Hrs/wk</span>
@@ -529,6 +641,24 @@ export default function StaffPage() {
                       </div>
                     </td>
 
+                    <td className="px-4 py-3">
+                      <div className="flex max-w-xs flex-wrap gap-1.5">
+                        {getLocationNamesForUser(s).length > 0 ? (
+                          getLocationNamesForUser(s).map((locationName: string) => (
+                            <span
+                              key={locationName}
+                              className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700"
+                            >
+                              <MapPin className="h-3 w-3" />
+                              {locationName}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-gray-400">No locations assigned</span>
+                        )}
+                      </div>
+                    </td>
+
                     {/* Hours */}
                     <td className="px-4 py-3">
                       {s.desiredWeeklyHours != null ? (
@@ -562,12 +692,14 @@ export default function StaffPage() {
       {/* ── Dialogs */}
       <CreateUserDialog
         open={showCreate}
+        locations={locations}
         onClose={() => setShowCreate(false)}
       />
 
       {editingUser && (
         <EditUserDialog
           user={editingUser}
+          locations={locations}
           onClose={() => setEditingUser(null)}
         />
       )}

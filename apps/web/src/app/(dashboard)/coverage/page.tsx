@@ -9,12 +9,15 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
-  Plus,
   RefreshCw,
   Loader2,
   CalendarCheck,
+  Calendar,
+  MapPin,
+  Info,
 } from 'lucide-react';
 import { Header } from '../../../components/layout/header';
+import { ErrorBanner } from '../../../components/ui/error-banner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../../components/ui/tabs';
 import {
   Dialog,
@@ -29,6 +32,8 @@ import {
   GET_DROP_REQUESTS,
   GET_AVAILABLE_DROPS,
   GET_USERS,
+  GET_MY_SHIFTS,
+  GET_LOCATIONS,
 } from '../../../lib/graphql/queries';
 import {
   REQUEST_SWAP,
@@ -43,64 +48,61 @@ import {
   CANCEL_DROP,
 } from '../../../lib/graphql/mutations';
 import { useAuth } from '../../../providers/auth-provider';
+import { formatAppError } from '../../../lib/utils';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-function shortId(id: string) {
-  return id ? `…${id.slice(-8)}` : '—';
-}
-
 function formatDate(iso: string) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { cls: string; icon: React.ReactNode }> = {
-    PENDING_ACCEPTANCE: {
-      cls: 'bg-yellow-100 text-yellow-700 border-yellow-200',
-      icon: <Clock className="w-3 h-3" />,
-    },
-    PENDING_APPROVAL: {
-      cls: 'bg-blue-100 text-blue-700 border-blue-200',
-      icon: <AlertCircle className="w-3 h-3" />,
-    },
-    APPROVED: {
-      cls: 'bg-green-100 text-green-700 border-green-200',
-      icon: <CheckCircle className="w-3 h-3" />,
-    },
-    REJECTED: {
-      cls: 'bg-red-100 text-red-700 border-red-200',
-      icon: <XCircle className="w-3 h-3" />,
-    },
-    CANCELLED: {
-      cls: 'bg-gray-100 text-gray-500 border-gray-200',
-      icon: <XCircle className="w-3 h-3" />,
-    },
-    OPEN: {
-      cls: 'bg-green-100 text-green-700 border-green-200',
-      icon: <CheckCircle className="w-3 h-3" />,
-    },
-    PICKED_UP_PENDING: {
-      cls: 'bg-indigo-100 text-indigo-700 border-indigo-200',
-      icon: <AlertCircle className="w-3 h-3" />,
-    },
-  };
-  const { cls, icon } = map[status] ?? {
-    cls: 'bg-gray-100 text-gray-500 border-gray-200',
-    icon: null,
+function formatShiftLabel(shift: any, locationsById: Map<string, any>) {
+  if (!shift) return 'Shift details unavailable';
+  const location = locationsById.get(shift.locationId);
+  const timeZone = location?.timezone;
+  const date = new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone,
+  }).format(new Date(shift.startTime));
+  const start = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone,
+  }).format(new Date(shift.startTime));
+  const end = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone,
+  }).format(new Date(shift.endTime));
+  const locationName = location?.name ? ` · ${location.name}` : '';
+  return `${date} · ${start}–${end} · ${shift.requiredSkill}${locationName}`;
+}
+
+function statusLabel(status: string, kind: 'swap' | 'drop') {
+  if (kind === 'swap' && status === 'PENDING_ACCEPTANCE') return 'WAITING FOR TEAMMATE';
+  if (kind === 'swap' && status === 'PENDING_APPROVAL') return 'WAITING FOR MANAGER';
+  if (kind === 'swap' && status === 'CANCELLED') return 'WITHDRAWN';
+  if (kind === 'drop' && status === 'CANCELLED') return 'WITHDRAWN';
+  if (kind === 'drop' && status === 'PICKED_UP_PENDING') return 'AWAITING APPROVAL';
+  return status.replace(/_/g, ' ');
+}
+
+function Badge({ status, kind = 'swap' }: { status: string; kind?: 'swap' | 'drop' }) {
+  const map: Record<string, string> = {
+    PENDING_ACCEPTANCE: 'bg-yellow-100 text-yellow-700 border-yellow-200',
+    PENDING_APPROVAL:   'bg-blue-100 text-blue-700 border-blue-200',
+    APPROVED:           'bg-green-100 text-green-700 border-green-200',
+    REJECTED:           'bg-red-100 text-red-700 border-red-200',
+    CANCELLED:          'bg-gray-100 text-gray-500 border-gray-200',
+    OPEN:               'bg-green-100 text-green-700 border-green-200',
+    PICKED_UP_PENDING:  'bg-indigo-100 text-indigo-700 border-indigo-200',
   };
   return (
-    <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cls}`}
-    >
-      {icon}
-      {status.replace(/_/g, ' ')}
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${map[status] ?? 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+      {statusLabel(status, kind)}
     </span>
   );
 }
@@ -108,161 +110,181 @@ function StatusBadge({ status }: { status: string }) {
 function userName(users: any[], id: string) {
   if (!id) return '—';
   const u = users.find((u: any) => u.id === id);
-  return u ? `${u.firstName} ${u.lastName}` : shortId(id);
+  return u ? `${u.firstName} ${u.lastName}` : `…${id.slice(-6)}`;
 }
 
-// ─── Request Drop Dialog ─────────────────────────────────────────────────────
+function locationAccent(locationId: string) {
+  const accents = [
+    { chip: 'bg-sky-50 text-sky-700 border-sky-200', card: 'border-l-sky-400' },
+    { chip: 'bg-emerald-50 text-emerald-700 border-emerald-200', card: 'border-l-emerald-400' },
+    { chip: 'bg-amber-50 text-amber-700 border-amber-200', card: 'border-l-amber-400' },
+    { chip: 'bg-rose-50 text-rose-700 border-rose-200', card: 'border-l-rose-400' },
+  ];
+  const sum = locationId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return accents[sum % accents.length];
+}
 
-function RequestDropDialog({
-  open,
-  onClose,
-  onSubmit,
-  loading,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSubmit: (shiftId: string) => void;
-  loading: boolean;
-}) {
-  const [shiftId, setShiftId] = useState('');
+function formatShiftDateTimeParts(shift: any, locationsById: Map<string, any>) {
+  const location = locationsById.get(shift?.locationId);
+  const timeZone = location?.timezone;
+  const date = new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone,
+  }).format(new Date(shift.startTime));
+  const start = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone,
+  }).format(new Date(shift.startTime));
+  const end = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone,
+  }).format(new Date(shift.endTime));
+  return { date, start, end, location };
+}
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (shiftId.trim()) onSubmit(shiftId.trim());
+function shiftActionHint(status: string, kind: 'swap' | 'drop', isRequester: boolean, isTarget: boolean) {
+  if (kind === 'swap') {
+    if (status === 'PENDING_ACCEPTANCE') {
+      return isRequester
+        ? 'You are waiting for the other staff member to accept before a manager can review it.'
+        : isTarget
+          ? 'You can accept this swap to send it to a manager for final approval.'
+          : 'This swap is waiting for staff acceptance.';
+    }
+    if (status === 'PENDING_APPROVAL') {
+      return 'Both staff have agreed. The original assignment stays in place until a manager approves the swap.';
+    }
+    if (status === 'CANCELLED') {
+      return 'The request was withdrawn before approval. The original shift assignment stays unchanged.';
+    }
   }
 
+  if (kind === 'drop') {
+    if (status === 'OPEN') return 'This shift is available for another qualified staff member to claim.';
+    if (status === 'PICKED_UP_PENDING') return 'A teammate has offered coverage. The manager still needs to approve the transfer.';
+    if (status === 'CANCELLED') return 'The drop request was withdrawn, so the original assignee still owns the shift.';
+    if (status === 'APPROVED') return 'Coverage was approved and the replacement staff member can work the shift.';
+    if (status === 'REJECTED') return 'The request was rejected. The original assignee still owns the shift.';
+  }
+
+  return null;
+}
+
+function Row({ children }: { children: React.ReactNode }) {
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ArrowDown className="w-5 h-5 text-orange-500" />
-            Request Drop
-          </DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4 mt-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Shift ID
-            </label>
-            <input
-              type="text"
-              value={shiftId}
-              onChange={(e) => setShiftId(e.target.value)}
-              placeholder="Paste the shift UUID"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
-            <p className="text-xs text-gray-400 mt-1">
-              Enter the ID of the shift you want to drop.
-            </p>
-          </div>
-          <DialogFooter className="pt-2">
-            <DialogClose asChild>
-              <button
-                type="button"
-                className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-            </DialogClose>
-            <button
-              type="submit"
-              disabled={loading || !shiftId.trim()}
-              className="px-4 py-2 rounded-lg bg-orange-600 text-white text-sm hover:bg-orange-700 disabled:opacity-50 flex items-center gap-2"
-            >
-              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-              Request Drop
-            </button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <div className="flex items-center justify-between gap-4 bg-white border border-gray-200 rounded-xl px-4 py-3">
+      {children}
+    </div>
   );
 }
 
-// ─── Request Swap Dialog ─────────────────────────────────────────────────────
+function Actions({ children }: { children: React.ReactNode }) {
+  return <div className="flex flex-wrap items-center justify-end gap-2 flex-shrink-0">{children}</div>;
+}
 
-function RequestSwapDialog({
-  open,
-  onClose,
-  onSubmit,
-  loading,
-  users,
-  currentUserId,
+function Btn({ onClick, color, disabled, loading, children }: { onClick?: () => void; color: string; disabled?: boolean; loading?: boolean; children: React.ReactNode }) {
+  const colors: Record<string, string> = {
+    green:  'border border-green-700 bg-green-600 text-white shadow-sm hover:bg-green-700',
+    red:    'border border-red-700 bg-red-600 text-white shadow-sm hover:bg-red-700',
+    gray:   'border border-gray-300 bg-gray-100 text-gray-800 shadow-sm hover:bg-gray-200',
+    orange: 'border border-amber-700 bg-amber-500 text-white shadow-sm hover:bg-amber-600',
+    blue:   'border border-blue-700 bg-blue-600 text-white shadow-sm hover:bg-blue-700',
+  };
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex min-w-[104px] items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap disabled:opacity-50 ${colors[color]}`}
+    >
+      {loading && <Loader2 className="w-3 h-3 animate-spin" />}
+      {children}
+    </button>
+  );
+}
+
+function Empty({ icon: Icon, text }: { icon: any; text: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+      <Icon className="w-10 h-10 mb-3 opacity-30" />
+      <p className="text-sm">{text}</p>
+    </div>
+  );
+}
+
+function ShiftMeta({
+  shift,
+  locationsById,
+  emphasizeLocation = false,
 }: {
-  open: boolean;
-  onClose: () => void;
-  onSubmit: (shiftId: string, targetId: string) => void;
-  loading: boolean;
-  users: any[];
-  currentUserId: string;
+  shift: any;
+  locationsById: Map<string, any>;
+  emphasizeLocation?: boolean;
 }) {
-  const [shiftId, setShiftId] = useState('');
-  const [targetId, setTargetId] = useState('');
-
-  const eligibleUsers = users.filter((u) => u.id !== currentUserId);
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (shiftId.trim() && targetId) onSubmit(shiftId.trim(), targetId);
-  }
+  if (!shift) return null;
+  const { date, start, end, location } = formatShiftDateTimeParts(shift, locationsById);
+  const accent = locationAccent(shift.locationId);
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <div className="flex flex-wrap items-center gap-2 mt-1">
+      <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-700">
+        <Clock className="mr-1 h-3 w-3 text-gray-400" />
+        {date} · {start}–{end}
+      </span>
+      {location && (
+        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${emphasizeLocation ? accent.chip : 'border-gray-200 bg-white text-gray-600'}`}>
+          <MapPin className="mr-1 h-3 w-3" />
+          {location.name}
+        </span>
+      )}
+      <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-0.5 text-xs uppercase tracking-wide text-gray-600">
+        {shift.requiredSkill}
+      </span>
+    </div>
+  );
+}
+
+// ─── Swap target dialog ───────────────────────────────────────────────────────
+
+function SwapTargetDialog({ shift, open, onClose, onSubmit, loading, users, currentUserId, locationsById }: {
+  shift: any | null; open: boolean; onClose: () => void;
+  onSubmit: (shiftId: string, targetId: string) => void;
+  loading: boolean; users: any[]; currentUserId: string; locationsById: Map<string, any>;
+}) {
+  const [targetId, setTargetId] = useState('');
+  const eligible = users.filter((u) => u.id !== currentUserId);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) { setTargetId(''); onClose(); } }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ArrowLeftRight className="w-5 h-5 text-blue-500" />
-            Request Swap
+            <ArrowLeftRight className="w-5 h-5 text-blue-500" /> Request Swap
           </DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4 mt-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Your Shift ID
-            </label>
-            <input
-              type="text"
-              value={shiftId}
-              onChange={(e) => setShiftId(e.target.value)}
-              placeholder="Paste the shift UUID"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Swap With
-            </label>
-            <select
-              value={targetId}
-              onChange={(e) => setTargetId(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg pl-3 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              required
-            >
-              <option value="">Select a team member…</option>
-              {eligibleUsers.map((u: any) => (
-                <option key={u.id} value={u.id}>
-                  {u.firstName} {u.lastName}
-                </option>
-              ))}
-            </select>
-          </div>
-          <DialogFooter className="pt-2">
+        {shift && (
+          <p className="text-sm text-gray-600 bg-gray-50 rounded-lg px-3 py-2 mt-2">{formatShiftLabel(shift, locationsById)}</p>
+        )}
+        <form onSubmit={(e) => { e.preventDefault(); if (shift && targetId) onSubmit(shift.id, targetId); }} className="space-y-4 mt-2">
+          <select
+            value={targetId}
+            onChange={(e) => setTargetId(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg pl-3 pr-8 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          >
+            <option value="">Select a team member…</option>
+            {eligible.map((u: any) => (
+              <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>
+            ))}
+          </select>
+          <DialogFooter>
             <DialogClose asChild>
-              <button
-                type="button"
-                className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50"
-              >
-                Cancel
-              </button>
+              <button type="button" className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50">Cancel</button>
             </DialogClose>
-            <button
-              type="submit"
-              disabled={loading || !shiftId.trim() || !targetId}
-              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
-            >
+            <button type="submit" disabled={loading || !targetId} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}
               Request Swap
             </button>
@@ -278,365 +300,346 @@ function RequestSwapDialog({
 export default function CoveragePage() {
   const { user } = useAuth();
   const canManage = user?.role === 'ADMIN' || user?.role === 'MANAGER';
+  const coverageSubtitle = canManage
+    ? 'Review and approve staff swap and coverage requests'
+    : 'Manage your shift swaps and drop requests';
 
-  // ── dialogs
-  const [showDropDialog, setShowDropDialog] = useState(false);
-  const [showSwapDialog, setShowSwapDialog] = useState(false);
+  const [swapShift, setSwapShift] = useState<any | null>(null);
+  const [dropConfirm, setDropConfirm] = useState<string | null>(null);
+  const [coverageError, setCoverageError] = useState('');
 
-  // ── queries
-  const { data: swapData, refetch: refetchSwaps } = useQuery(GET_SWAP_REQUESTS);
-  const { data: dropData, refetch: refetchDrops } = useQuery(GET_DROP_REQUESTS);
-  const { data: availableData, refetch: refetchAvailable } = useQuery(GET_AVAILABLE_DROPS);
-  const { data: usersData } = useQuery(GET_USERS);
+  const { data: swapData,      refetch: refetchSwaps     } = useQuery(GET_SWAP_REQUESTS, { pollInterval: 10000 });
+  const { data: dropData,      refetch: refetchDrops     } = useQuery(GET_DROP_REQUESTS, { pollInterval: 10000 });
+  const { data: availableData, refetch: refetchAvailable } = useQuery(GET_AVAILABLE_DROPS, { pollInterval: 10000 });
+  const { data: usersData                                } = useQuery(GET_USERS, { pollInterval: 30000 });
+  const { data: myShiftsData,  refetch: refetchMyShifts  } = useQuery(GET_MY_SHIFTS, { pollInterval: 10000 });
+  const { data: locationsData                            } = useQuery(GET_LOCATIONS, { pollInterval: 30000 });
 
-  const swaps: any[] = swapData?.swapRequests ?? [];
-  const drops: any[] = dropData?.dropRequests ?? [];
+  const swaps:     any[] = swapData?.swapRequests   ?? [];
+  const drops:     any[] = dropData?.dropRequests   ?? [];
   const available: any[] = availableData?.availableDrops ?? [];
-  const users: any[] = usersData?.users ?? [];
+  const users:     any[] = usersData?.users         ?? [];
+  const myShifts:  any[] = myShiftsData?.myShifts   ?? [];
+  const locations: any[] = locationsData?.locations ?? [];
+  const locationsById = new Map(locations.map((location: any) => [location.id, location]));
+  const activeSwaps = swaps.filter((swap) => ['PENDING_ACCEPTANCE', 'PENDING_APPROVAL'].includes(swap.status));
+  const activeDrops = drops.filter((drop) => ['OPEN', 'PICKED_UP_PENDING'].includes(drop.status));
 
-  // ── mutations — swaps
-  const [requestSwap, { loading: requestingSwap }] = useMutation(REQUEST_SWAP, {
-    onCompleted: () => { refetchSwaps(); setShowSwapDialog(false); },
+  const [requestSwap, { loading: requestingSwap }] = useMutation(REQUEST_SWAP,  {
+    onCompleted: () => {
+      refetchSwaps();
+      setSwapShift(null);
+      setCoverageError('');
+    },
+    onError: (error) => setCoverageError(formatAppError(error)),
   });
-  const [acceptSwap] = useMutation(ACCEPT_SWAP, { onCompleted: () => refetchSwaps() });
-  const [approveSwap] = useMutation(APPROVE_SWAP, { onCompleted: () => refetchSwaps() });
-  const [rejectSwap] = useMutation(REJECT_SWAP, { onCompleted: () => refetchSwaps() });
-  const [cancelSwap] = useMutation(CANCEL_SWAP, { onCompleted: () => refetchSwaps() });
+  const [acceptSwap]                               = useMutation(ACCEPT_SWAP,   { onCompleted: () => refetchSwaps() });
+  const [approveSwap]                              = useMutation(APPROVE_SWAP,  { onCompleted: () => refetchSwaps() });
+  const [rejectSwap]                               = useMutation(REJECT_SWAP,   { onCompleted: () => refetchSwaps() });
+  const [cancelSwap]                               = useMutation(CANCEL_SWAP,   { onCompleted: () => refetchSwaps() });
 
-  // ── mutations — drops
-  const [requestDrop, { loading: requestingDrop }] = useMutation(REQUEST_DROP, {
-    onCompleted: () => { refetchDrops(); setShowDropDialog(false); },
+  const [requestDrop, { loading: requestingDrop }] = useMutation(REQUEST_DROP,  {
+    onCompleted: () => {
+      refetchDrops();
+      refetchMyShifts();
+      setDropConfirm(null);
+      setCoverageError('');
+    },
+    onError: (error) => setCoverageError(formatAppError(error)),
   });
-  const [pickupDrop] = useMutation(PICKUP_DROP, {
-    onCompleted: () => { refetchDrops(); refetchAvailable(); },
+  const [pickupDrop]                               = useMutation(PICKUP_DROP,   {
+    onCompleted: () => {
+      refetchDrops();
+      refetchAvailable();
+      setCoverageError('');
+    },
+    onError: (error) => setCoverageError(formatAppError(error)),
   });
-  const [approveDrop] = useMutation(APPROVE_DROP, { onCompleted: () => refetchDrops() });
-  const [rejectDrop] = useMutation(REJECT_DROP, { onCompleted: () => refetchDrops() });
-  const [cancelDrop] = useMutation(CANCEL_DROP, { onCompleted: () => refetchDrops() });
+  const [approveDrop]                              = useMutation(APPROVE_DROP,  {
+    onCompleted: () => {
+      refetchDrops();
+      refetchMyShifts();
+      refetchAvailable();
+      setCoverageError('');
+    },
+    onError: (error) => setCoverageError(formatAppError(error)),
+  });
+  const [rejectDrop]                               = useMutation(REJECT_DROP,   {
+    onCompleted: () => {
+      refetchDrops();
+      refetchMyShifts();
+      refetchAvailable();
+      setCoverageError('');
+    },
+    onError: (error) => setCoverageError(formatAppError(error)),
+  });
+  const [cancelDrop]                               = useMutation(CANCEL_DROP,   {
+    onCompleted: () => {
+      refetchDrops();
+      refetchMyShifts();
+      refetchAvailable();
+      setCoverageError('');
+    },
+    onError: (error) => setCoverageError(formatAppError(error)),
+  });
 
-  // ── action handlers
-  function handleRequestSwap(shiftId: string, targetId: string) {
-    requestSwap({ variables: { input: { shiftId, targetId } } });
-  }
-
-  function handleRequestDrop(shiftId: string) {
-    requestDrop({ variables: { input: { shiftId } } });
-  }
-
-  const pendingSwapCount = swaps.filter(
-    (s) => s.status === 'PENDING_APPROVAL' || s.status === 'PENDING_ACCEPTANCE',
-  ).length;
-  const pendingDropCount = drops.filter(
-    (d) => d.status === 'PICKED_UP_PENDING',
-  ).length;
+  const pendingSwaps = activeSwaps.length;
+  const pendingDrops = activeDrops.filter(d => d.status === 'PICKED_UP_PENDING').length;
 
   return (
     <div className="flex flex-col h-full">
-      <Header title="Coverage" subtitle="Manage shift swaps and drop requests" />
+      <Header title="Coverage" subtitle={coverageSubtitle} />
 
       <div className="flex-1 overflow-auto p-6">
-        {/* ── action row */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex gap-3">
-            <button
-              onClick={() => setShowSwapDialog(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors"
-            >
-              <ArrowLeftRight className="w-4 h-4" />
-              Request Swap
-            </button>
-            <button
-              onClick={() => setShowDropDialog(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-medium hover:bg-orange-600 transition-colors"
-            >
-              <ArrowDown className="w-4 h-4" />
-              Request Drop
-            </button>
-          </div>
+        <div className="flex justify-end mb-4">
           <button
-            onClick={() => { refetchSwaps(); refetchDrops(); refetchAvailable(); }}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+            onClick={() => { refetchSwaps(); refetchDrops(); refetchAvailable(); refetchMyShifts(); }}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm text-gray-600 hover:bg-gray-50"
           >
-            <RefreshCw className="w-4 h-4" />
-            Refresh
+            <RefreshCw className="w-4 h-4" /> Refresh
           </button>
         </div>
 
-        {/* ── tabs */}
-        <Tabs defaultValue="swaps">
+        {canManage && (
+          <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            <p className="font-medium">Manager view</p>
+            <p className="mt-1 text-xs text-blue-700">
+              Staff create swap and drop requests from their <span className="font-medium">My Shifts</span> tab. Managers review active requests here after a staff member submits them.
+            </p>
+          </div>
+        )}
+
+        {coverageError && (
+          <ErrorBanner
+            className="mb-4"
+            title="Coverage request could not be completed"
+            message={coverageError}
+            onDismiss={() => setCoverageError('')}
+          />
+        )}
+
+        <Tabs defaultValue={canManage ? 'swaps' : 'my-shifts'}>
           <TabsList className="mb-4">
+            {!canManage && (
+              <TabsTrigger value="my-shifts" className="flex items-center gap-2">
+                <Calendar className="w-4 h-4" />
+                My Shifts
+                {myShifts.length > 0 && (
+                  <span className="ml-1 bg-indigo-600 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">{myShifts.length}</span>
+                )}
+              </TabsTrigger>
+            )}
             <TabsTrigger value="swaps" className="flex items-center gap-2">
               <ArrowLeftRight className="w-4 h-4" />
-              Swap Requests
-              {pendingSwapCount > 0 && (
-                <span className="ml-1 bg-blue-600 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">
-                  {pendingSwapCount}
-                </span>
+              Swaps
+              {pendingSwaps > 0 && (
+                <span className="ml-1 bg-blue-600 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">{pendingSwaps}</span>
               )}
             </TabsTrigger>
             <TabsTrigger value="drops" className="flex items-center gap-2">
               <ArrowDown className="w-4 h-4" />
-              Drop Requests
-              {pendingDropCount > 0 && (
-                <span className="ml-1 bg-orange-500 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">
-                  {pendingDropCount}
-                </span>
+              Drops
+              {pendingDrops > 0 && (
+                <span className="ml-1 bg-orange-500 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">{pendingDrops}</span>
               )}
             </TabsTrigger>
             <TabsTrigger value="available" className="flex items-center gap-2">
               <CalendarCheck className="w-4 h-4" />
-              Available Shifts
+              Available
               {available.length > 0 && (
-                <span className="ml-1 bg-green-600 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">
-                  {available.length}
-                </span>
+                <span className="ml-1 bg-green-600 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">{available.length}</span>
               )}
             </TabsTrigger>
           </TabsList>
 
-          {/* ── Swap Requests tab */}
+          {/* ── My Shifts */}
+          {!canManage && (
+            <TabsContent value="my-shifts">
+              <div className="space-y-3">
+                {myShifts.length === 0 && <Empty icon={Calendar} text="No upcoming assigned shifts" />}
+                {myShifts.map((shift: any) => (
+                  <div key={shift.id} className={`bg-white border border-gray-200 border-l-4 ${locationAccent(shift.locationId).card} rounded-xl px-4 py-3`}>
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900">Your assigned shift</p>
+                        <ShiftMeta shift={shift} locationsById={locationsById} emphasizeLocation />
+                        <p className="mt-2 text-xs text-gray-500">Need coverage? Ask for a swap or offer the shift for pickup.</p>
+                      </div>
+                      {dropConfirm !== shift.id && (
+                        <Actions>
+                          <Btn color="blue" onClick={() => setSwapShift(shift)}>
+                            <ArrowLeftRight className="w-3.5 h-3.5" /> Swap
+                          </Btn>
+                          <Btn color="orange" onClick={() => setDropConfirm(shift.id)}>
+                            <ArrowDown className="w-3.5 h-3.5" /> Offer Up
+                          </Btn>
+                        </Actions>
+                      )}
+                    </div>
+                    {dropConfirm === shift.id && (
+                      <div className="mt-4 border-t border-orange-100 pt-4">
+                        <div className="flex flex-col gap-3 rounded-xl bg-orange-50 px-3 py-3 sm:flex-row sm:items-start sm:justify-between">
+                          <span className="flex-1 pt-0.5 text-xs text-orange-700">Offer this shift for coverage. You still own it until someone claims it and a manager approves the handoff.</span>
+                          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                            <Btn color="orange" onClick={() => requestDrop({ variables: { input: { shiftId: shift.id } } })} disabled={requestingDrop} loading={requestingDrop}>
+                              Offer Shift
+                            </Btn>
+                            <Btn color="gray" onClick={() => setDropConfirm(null)}>Cancel</Btn>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </TabsContent>
+          )}
+
+          {/* ── Swaps */}
           <TabsContent value="swaps">
             <div className="space-y-3">
-              {swaps.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-                  <ArrowLeftRight className="w-10 h-10 mb-3 opacity-30" />
-                  <p className="text-sm">No swap requests</p>
+              <div className="flex items-center gap-2">
+                <ArrowLeftRight className="w-4 h-4 text-blue-500" />
+                <h3 className="text-sm font-semibold text-gray-900">Active Swap Requests</h3>
+              </div>
+              {!canManage && (
+                <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                  <p className="font-medium">Create new swaps from My Shifts</p>
+                  <p className="mt-1 text-xs text-blue-700">This tab is only for swaps that are still waiting on another teammate or a manager.</p>
                 </div>
               )}
-              {swaps.map((swap: any) => {
+              {activeSwaps.length === 0 && <Empty icon={ArrowLeftRight} text="No active swap requests" />}
+              {activeSwaps.map((swap: any) => {
                 const isRequester = swap.requesterId === user?.id;
-                const isTarget = swap.targetId === user?.id;
-                const canAccept =
-                  isTarget && swap.status === 'PENDING_ACCEPTANCE';
-                const canCancelAsRequester =
-                  isRequester && swap.status === 'PENDING_ACCEPTANCE';
-                const canManagerAct =
-                  canManage && swap.status === 'PENDING_APPROVAL';
-
+                const isTarget    = swap.targetId    === user?.id;
+                const canAccept   = isTarget    && swap.status === 'PENDING_ACCEPTANCE';
+                const canCancel   = isRequester && swap.status === 'PENDING_ACCEPTANCE';
+                const canManageIt = canManage   && swap.status === 'PENDING_APPROVAL';
+                const hint = shiftActionHint(swap.status, 'swap', isRequester, isTarget);
                 return (
-                  <div
-                    key={swap.id}
-                    className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm hover:shadow-md transition-shadow"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className="mt-0.5 w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0">
-                          <ArrowLeftRight className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-medium text-sm text-gray-900">Swap Request</p>
-                          <div className="mt-1 space-y-0.5">
-                            <p className="text-xs text-gray-500">
-                              <span className="font-medium text-gray-700">Shift:</span>{' '}
-                              {shortId(swap.shiftId)}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              <span className="font-medium text-gray-700">From:</span>{' '}
-                              {userName(users, swap.requesterId)}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              <span className="font-medium text-gray-700">To:</span>{' '}
-                              {userName(users, swap.targetId)}
-                            </p>
-                            {swap.expiresAt && (
-                              <p className="text-xs text-gray-400">
-                                <Clock className="w-3 h-3 inline mr-1" />
-                                Expires {formatDate(swap.expiresAt)}
-                              </p>
-                            )}
-                          </div>
-                        </div>
+                  <Row key={swap.id}>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge status={swap.status} />
+                        {swap.expiresAt && (
+                          <span className="text-xs text-gray-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> {formatDate(swap.expiresAt)}
+                          </span>
+                        )}
                       </div>
-
-                      <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                        <StatusBadge status={swap.status} />
-                        <div className="flex flex-wrap gap-2 justify-end">
-                          {canAccept && (
-                            <button
-                              onClick={() => acceptSwap({ variables: { swapId: swap.id } })}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700"
-                            >
-                              <CheckCircle className="w-3.5 h-3.5" />
-                              Accept
-                            </button>
-                          )}
-                          {canCancelAsRequester && (
-                            <button
-                              onClick={() => cancelSwap({ variables: { swapId: swap.id } })}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-xs font-medium hover:bg-gray-200"
-                            >
-                              <XCircle className="w-3.5 h-3.5" />
-                              Cancel
-                            </button>
-                          )}
-                          {canManagerAct && (
-                            <>
-                              <button
-                                onClick={() => approveSwap({ variables: { swapId: swap.id } })}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700"
-                              >
-                                <CheckCircle className="w-3.5 h-3.5" />
-                                Approve
-                              </button>
-                              <button
-                                onClick={() => rejectSwap({ variables: { swapId: swap.id } })}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700"
-                              >
-                                <XCircle className="w-3.5 h-3.5" />
-                                Reject
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
+                      <p className="text-sm text-gray-700">
+                        <span className="font-medium">{userName(users, swap.requesterId)}</span>
+                        {isRequester && <span className="text-blue-600"> (you)</span>}
+                        {' → '}
+                        <span className="font-medium">{userName(users, swap.targetId)}</span>
+                        {isTarget && <span className="text-blue-600"> (you)</span>}
+                      </p>
+                      <ShiftMeta shift={swap.shift} locationsById={locationsById} />
+                      {hint && (
+                        <p className="mt-2 inline-flex items-start gap-1 rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700">
+                          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>{hint}</span>
+                        </p>
+                      )}
+                      {swap.cancelReason && (
+                        <p className="text-xs text-gray-500 italic mt-1">Reason: {swap.cancelReason}</p>
+                      )}
                     </div>
-                  </div>
+                    <Actions>
+                      {canAccept   && <Btn color="green"  onClick={() => acceptSwap ({variables:{swapId:swap.id}})}><CheckCircle className="w-3.5 h-3.5"/>Accept</Btn>}
+                      {canCancel   && <Btn color="gray"   onClick={() => cancelSwap ({variables:{swapId:swap.id}})}><XCircle     className="w-3.5 h-3.5"/>Withdraw</Btn>}
+                      {canManageIt && <Btn color="green"  onClick={() => approveSwap({variables:{swapId:swap.id}})}><CheckCircle className="w-3.5 h-3.5"/>Approve</Btn>}
+                      {canManageIt && <Btn color="red"    onClick={() => rejectSwap ({variables:{swapId:swap.id}})}><XCircle     className="w-3.5 h-3.5"/>Reject</Btn>}
+                    </Actions>
+                  </Row>
                 );
               })}
             </div>
           </TabsContent>
 
-          {/* ── Drop Requests tab */}
+          {/* ── Drops */}
           <TabsContent value="drops">
             <div className="space-y-3">
-              {drops.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-                  <ArrowDown className="w-10 h-10 mb-3 opacity-30" />
-                  <p className="text-sm">No drop requests</p>
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-orange-500" />
+                <h3 className="text-sm font-semibold text-gray-900">Active Drop Requests</h3>
+              </div>
+              {!canManage && (
+                <div className="rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+                  <p className="font-medium">Offer shifts from My Shifts</p>
+                  <p className="mt-1 text-xs text-orange-700">This tab shows only live drop requests that are still open or waiting for manager approval.</p>
                 </div>
               )}
-              {drops.map((drop: any) => {
+              {activeDrops.length === 0 && <Empty icon={ArrowDown} text="No active drop requests" />}
+              {activeDrops.map((drop: any) => {
                 const isRequester = drop.requesterId === user?.id;
-                const canCancelDrop = isRequester && drop.status === 'OPEN';
-                const canManagerAct = canManage && drop.status === 'PICKED_UP_PENDING';
-
+                const canCancel   = isRequester && drop.status === 'OPEN';
+                const canManageIt = canManage   && drop.status === 'PICKED_UP_PENDING';
+                const hint = shiftActionHint(drop.status, 'drop', isRequester, false);
                 return (
-                  <div
-                    key={drop.id}
-                    className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm hover:shadow-md transition-shadow"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className="mt-0.5 w-8 h-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center flex-shrink-0">
-                          <ArrowDown className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-medium text-sm text-gray-900">Drop Request</p>
-                          <div className="mt-1 space-y-0.5">
-                            <p className="text-xs text-gray-500">
-                              <span className="font-medium text-gray-700">Shift:</span>{' '}
-                              {shortId(drop.shiftId)}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              <span className="font-medium text-gray-700">Requester:</span>{' '}
-                              {userName(users, drop.requesterId)}
-                            </p>
-                            {drop.pickedUpById && (
-                              <p className="text-xs text-gray-500">
-                                <span className="font-medium text-gray-700">Picked up by:</span>{' '}
-                                {userName(users, drop.pickedUpById)}
-                              </p>
-                            )}
-                            {drop.expiresAt && (
-                              <p className="text-xs text-gray-400">
-                                <Clock className="w-3 h-3 inline mr-1" />
-                                Expires {formatDate(drop.expiresAt)}
-                              </p>
-                            )}
-                            {drop.managerNote && (
-                              <p className="text-xs text-gray-500 italic">
-                                &ldquo;{drop.managerNote}&rdquo;
-                              </p>
-                            )}
-                          </div>
-                        </div>
+                  <Row key={drop.id}>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge status={drop.status} kind="drop" />
+                        {drop.expiresAt && (
+                          <span className="text-xs text-gray-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> {formatDate(drop.expiresAt)}
+                          </span>
+                        )}
                       </div>
-
-                      <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                        <StatusBadge status={drop.status} />
-                        <div className="flex flex-wrap gap-2 justify-end">
-                          {canCancelDrop && (
-                            <button
-                              onClick={() => cancelDrop({ variables: { dropId: drop.id } })}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-xs font-medium hover:bg-gray-200"
-                            >
-                              <XCircle className="w-3.5 h-3.5" />
-                              Cancel Drop
-                            </button>
-                          )}
-                          {canManagerAct && (
-                            <>
-                              <button
-                                onClick={() => approveDrop({ variables: { dropId: drop.id } })}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700"
-                              >
-                                <CheckCircle className="w-3.5 h-3.5" />
-                                Approve
-                              </button>
-                              <button
-                                onClick={() => rejectDrop({ variables: { dropId: drop.id } })}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700"
-                              >
-                                <XCircle className="w-3.5 h-3.5" />
-                                Reject
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
+                      <p className="text-sm text-gray-700">
+                        <span className="font-medium">{userName(users, drop.requesterId)}</span>
+                        {isRequester && <span className="text-orange-600"> (you)</span>}
+                        {drop.pickedUpById && <> → picked up by <span className="font-medium">{userName(users, drop.pickedUpById)}</span></>}
+                      </p>
+                      <ShiftMeta shift={drop.shift} locationsById={locationsById} />
+                      {hint && (
+                        <p className="mt-2 inline-flex items-start gap-1 rounded-lg bg-orange-50 px-2.5 py-1.5 text-xs text-orange-700">
+                          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>{hint}</span>
+                        </p>
+                      )}
+                      {drop.managerNote && <p className="text-xs text-gray-500 italic mt-0.5">"{drop.managerNote}"</p>}
                     </div>
-                  </div>
+                    <Actions>
+                      {canCancel   && <Btn color="gray"  onClick={() => cancelDrop ({variables:{dropId:drop.id}})}><XCircle     className="w-3.5 h-3.5"/>Withdraw</Btn>}
+                      {canManageIt && <Btn color="green" onClick={() => approveDrop({variables:{dropId:drop.id}})}><CheckCircle className="w-3.5 h-3.5"/>Approve</Btn>}
+                      {canManageIt && <Btn color="red"   onClick={() => rejectDrop ({variables:{dropId:drop.id}})}><XCircle     className="w-3.5 h-3.5"/>Reject</Btn>}
+                    </Actions>
+                  </Row>
                 );
               })}
             </div>
           </TabsContent>
 
-          {/* ── Available Shifts tab */}
+          {/* ── Available */}
           <TabsContent value="available">
-            <div className="space-y-3">
-              {available.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-                  <CalendarCheck className="w-10 h-10 mb-3 opacity-30" />
-                  <p className="text-sm">No available shifts to pick up</p>
-                </div>
-              )}
+            <div className="space-y-4">
+              <div className="rounded-xl border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-800">
+                <p className="font-medium">Pick up open coverage requests</p>
+                <p className="mt-1 text-xs text-green-700">Claiming a shift sends it to a manager for approval. The original owner keeps the shift until that approval happens.</p>
+              </div>
+              {available.length === 0 && <Empty icon={CalendarCheck} text="No available shifts to pick up" />}
               {available.map((drop: any) => (
-                <div
-                  key={drop.id}
-                  className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm hover:shadow-md transition-shadow"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-start gap-3 min-w-0">
-                      <div className="mt-0.5 w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center flex-shrink-0">
-                        <Plus className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-medium text-sm text-gray-900">Available Shift</p>
-                        <div className="mt-1 space-y-0.5">
-                          <p className="text-xs text-gray-500">
-                            <span className="font-medium text-gray-700">Shift:</span>{' '}
-                            {shortId(drop.shiftId)}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            <span className="font-medium text-gray-700">Dropped by:</span>{' '}
-                            {userName(users, drop.requesterId)}
-                          </p>
-                          {drop.expiresAt && (
-                            <p className="text-xs text-gray-400">
-                              <Clock className="w-3 h-3 inline mr-1" />
-                              Expires {formatDate(drop.expiresAt)}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => pickupDrop({ variables: { dropId: drop.id } })}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 flex-shrink-0"
-                    >
-                      <CalendarCheck className="w-4 h-4" />
-                      Pick Up
-                    </button>
+                <div key={drop.id} className={`bg-white border border-gray-200 border-l-4 ${locationAccent(drop.shift?.locationId ?? drop.id).card} rounded-xl px-4 py-3`}>
+                  <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    {drop.expiresAt && (
+                      <span className="text-xs text-gray-400 flex items-center gap-1 mb-1">
+                        <Clock className="w-3 h-3" /> Expires {formatDate(drop.expiresAt)}
+                      </span>
+                    )}
+                    <p className="text-sm text-gray-700">
+                      Dropped by <span className="font-medium">{userName(users, drop.requesterId)}</span>
+                    </p>
+                    <ShiftMeta shift={drop.shift} locationsById={locationsById} emphasizeLocation />
+                    <p className="mt-2 text-xs text-gray-500">Pick this up only if you can cover it. A manager will still review and approve the final handoff.</p>
+                  </div>
+                  {drop.requesterId !== user?.id && (
+                    <Btn color="green" onClick={() => pickupDrop({ variables: { dropId: drop.id } })}>
+                      <CalendarCheck className="w-3.5 h-3.5" /> Pick Up
+                    </Btn>
+                  )}
                   </div>
                 </div>
               ))}
@@ -645,20 +648,15 @@ export default function CoveragePage() {
         </Tabs>
       </div>
 
-      {/* ── Dialogs */}
-      <RequestSwapDialog
-        open={showSwapDialog}
-        onClose={() => setShowSwapDialog(false)}
-        onSubmit={handleRequestSwap}
+      <SwapTargetDialog
+        shift={swapShift}
+        open={swapShift !== null}
+        onClose={() => setSwapShift(null)}
+        onSubmit={(shiftId, targetId) => requestSwap({ variables: { input: { shiftId, targetId } } })}
         loading={requestingSwap}
         users={users}
         currentUserId={user?.id ?? ''}
-      />
-      <RequestDropDialog
-        open={showDropDialog}
-        onClose={() => setShowDropDialog(false)}
-        onSubmit={handleRequestDrop}
-        loading={requestingDrop}
+        locationsById={locationsById}
       />
     </div>
   );

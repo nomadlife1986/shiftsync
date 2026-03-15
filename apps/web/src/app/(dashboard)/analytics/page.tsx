@@ -3,8 +3,10 @@ import { useQuery } from '@apollo/client';
 import { useMemo, useState } from 'react';
 import { BarChart2, Users, Star, TrendingUp, Loader2, Info, MapPin } from 'lucide-react';
 import { Header } from '../../../components/layout/header';
+import { ErrorBanner } from '../../../components/ui/error-banner';
 import { GET_FAIRNESS_REPORT, GET_LOCATIONS } from '../../../lib/graphql/queries';
 import { useRoleGuard } from '../../../hooks/use-role-guard';
+import { formatAppError } from '../../../lib/utils';
 
 function StatCard({ label, value, icon }: {
   label: string; value: string; icon: React.ReactNode;
@@ -34,10 +36,10 @@ export default function AnalyticsPage() {
     return { periodStart: start, periodEnd: end };
   }, []);
 
-  const { data: locData } = useQuery(GET_LOCATIONS);
+  const { data: locData, error: locationsError } = useQuery(GET_LOCATIONS);
   const locations: any[] = locData?.locations ?? [];
 
-  const { data, loading } = useQuery(GET_FAIRNESS_REPORT, {
+  const { data, loading, error } = useQuery(GET_FAIRNESS_REPORT, {
     variables: { locationId: locationId || undefined, periodStart, periodEnd },
     skip: !locationId,
   });
@@ -60,6 +62,21 @@ export default function AnalyticsPage() {
       <Header title="Analytics" subtitle="Fairness & hours distribution" />
 
       <div className="flex-1 overflow-auto p-6">
+        {locationsError && (
+          <ErrorBanner
+            className="mb-4"
+            title="Could not load locations"
+            message={formatAppError(locationsError)}
+          />
+        )}
+
+        {error && (
+          <ErrorBanner
+            className="mb-4"
+            title="Could not load analytics"
+            message={formatAppError(error)}
+          />
+        )}
 
         {/* ── Location picker ─────────────────────────────────────────── */}
         <div className="flex items-center gap-3 mb-6">

@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useMutation, useQuery } from '@apollo/client';
 import { Header } from '../../../components/layout/header';
+import { ErrorBanner } from '../../../components/ui/error-banner';
 import { useAuth } from '../../../providers/auth-provider';
 import { UPDATE_USER, SET_AVAILABILITY } from '../../../lib/graphql/mutations';
 import { GET_ME } from '../../../lib/graphql/queries';
@@ -15,7 +16,10 @@ import {
   Save,
   Check,
   Briefcase,
+  MapPin,
 } from 'lucide-react';
+import { formatAppError } from '../../../lib/utils';
+import { GET_LOCATIONS } from '../../../lib/graphql/queries';
 
 const ALL_SKILLS = ['BARTENDER', 'LINE_COOK', 'SERVER', 'HOST', 'BARBACK', 'DISHWASHER'] as const;
 type Skill = typeof ALL_SKILLS[number];
@@ -56,6 +60,7 @@ export default function SettingsPage() {
   );
   const [skills, setSkills] = useState<Skill[]>((user?.skills as Skill[]) ?? []);
   const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState('');
   const hasHydrated = useRef(false);
 
   // ── Availability state ───────────────────────────────────────────────────────
@@ -63,27 +68,40 @@ export default function SettingsPage() {
     buildDefaultAvailability(),
   );
   const [availSaved, setAvailSaved] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState('');
 
   // ── Queries & mutations ──────────────────────────────────────────────────────
-  const { data: meData } = useQuery(GET_ME, { fetchPolicy: 'network-only' });
+  const { data: meData, error: meError } = useQuery(GET_ME, { fetchPolicy: 'network-only' });
+  const { data: locationData } = useQuery(GET_LOCATIONS);
+  const locations: any[] = locationData?.locations ?? [];
+  const locationNameById = new Map(locations.map((location: any) => [location.id, location.name]));
+  const me = meData?.me;
+  const locationIdsForProfile =
+    me?.role === 'STAFF' ? (me?.certifiedLocationIds ?? []) : (me?.managedLocationIds ?? []);
+  const locationNamesForProfile = locationIdsForProfile
+    .map((id: string) => locationNameById.get(id))
+    .filter(Boolean);
 
   const [updateUser, { loading: profileLoading }] = useMutation(UPDATE_USER, {
     onCompleted: () => {
+      setProfileError('');
       setProfileSaved(true);
       setTimeout(() => setProfileSaved(false), 2500);
     },
+    onError: (error) => setProfileError(formatAppError(error)),
   });
 
   const [setAvailabilityMutation, { loading: availLoading }] = useMutation(SET_AVAILABILITY, {
     onCompleted: () => {
+      setAvailabilityError('');
       setAvailSaved(true);
       setTimeout(() => setAvailSaved(false), 2500);
     },
+    onError: (error) => setAvailabilityError(formatAppError(error)),
   });
 
   // Hydrate from GET_ME once — never re-run after mutation cache updates
   useEffect(() => {
-    const me = meData?.me;
     if (!me || hasHydrated.current) return;
     hasHydrated.current = true;
 
@@ -164,6 +182,14 @@ export default function SettingsPage() {
 
       <div className="flex-1 overflow-auto p-6">
         <div className="max-w-2xl">
+          {meError && (
+            <ErrorBanner
+              className="mb-4"
+              title="Could not load account settings"
+              message={formatAppError(meError)}
+            />
+          )}
+
           <Tabs defaultValue="profile">
             <TabsList className="mb-6 bg-gray-100 p-1 rounded-lg">
               <TabsTrigger value="profile" className="flex items-center gap-2">
@@ -183,6 +209,13 @@ export default function SettingsPage() {
             {/* ── TAB 1: PROFILE ─────────────────────────────────────────────── */}
             <TabsContent value="profile">
               <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-6">
+                {profileError && (
+                  <ErrorBanner
+                    title="Could not save profile"
+                    message={profileError}
+                    onDismiss={() => setProfileError('')}
+                  />
+                )}
 
                 {/* Name row */}
                 <div>
@@ -297,6 +330,28 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
+                <div>
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-3">
+                    <MapPin size={13} className="text-gray-400" />
+                    {me?.role === 'STAFF' ? 'Certified Locations' : 'Managed Locations'}
+                  </label>
+                  {locationNamesForProfile.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {locationNamesForProfile.map((locationName: string) => (
+                        <span
+                          key={locationName}
+                          className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700"
+                        >
+                          <MapPin className="h-3 w-3" />
+                          {locationName}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">No locations assigned.</p>
+                  )}
+                </div>
+
                 {/* Save button */}
                 <div className="flex items-center gap-4 pt-2 border-t border-gray-100">
                   <button
@@ -320,6 +375,14 @@ export default function SettingsPage() {
             {/* ── TAB 2: AVAILABILITY ──────────────────────────────────────────── */}
             <TabsContent value="availability">
               <div className="bg-white rounded-xl border border-gray-200 p-6">
+                {availabilityError && (
+                  <ErrorBanner
+                    className="mb-4"
+                    title="Could not save availability"
+                    message={availabilityError}
+                    onDismiss={() => setAvailabilityError('')}
+                  />
+                )}
                 <div className="flex items-center gap-2 mb-5">
                   <Calendar size={16} className="text-blue-500" />
                   <h3 className="font-semibold text-gray-800">Weekly Availability</h3>
@@ -453,6 +516,28 @@ export default function SettingsPage() {
                       Email
                     </dt>
                     <dd className="text-gray-700">{user?.email}</dd>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <dt className="text-xs font-medium text-gray-400 uppercase tracking-wide">
+                      {me?.role === 'STAFF' ? 'Certified Locations' : 'Managed Locations'}
+                    </dt>
+                    <dd>
+                      {locationNamesForProfile.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {locationNamesForProfile.map((locationName: string) => (
+                            <span
+                              key={locationName}
+                              className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700"
+                            >
+                              <MapPin className="h-3 w-3" />
+                              {locationName}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-gray-500">No locations assigned.</span>
+                      )}
+                    </dd>
                   </div>
                 </dl>
               </div>

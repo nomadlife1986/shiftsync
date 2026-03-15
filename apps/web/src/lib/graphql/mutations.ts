@@ -59,6 +59,7 @@ export const ASSIGN_STAFF = gql`
       violations {
         type
         message
+        severity
       }
       overtimeWarnings {
         type
@@ -88,12 +89,23 @@ export const WHAT_IF_ASSIGNMENT = gql`
       violations {
         type
         message
+        severity
       }
       warnings {
         type
         message
       }
       projectedWeeklyHours
+    }
+  }
+`;
+
+export const PUBLISH_SHIFT = gql`
+  mutation PublishShift($id: ID!) {
+    publishShift(id: $id) {
+      id
+      status
+      publishedAt
     }
   }
 `;
@@ -244,6 +256,8 @@ export const CREATE_USER = gql`
       role
       phone
       skills
+      certifiedLocationIds
+      managedLocationIds
       desiredWeeklyHours
       createdAt
     }
@@ -257,9 +271,12 @@ export const UPDATE_USER = gql`
       email
       firstName
       lastName
+      role
       phone
       desiredWeeklyHours
       skills
+      certifiedLocationIds
+      managedLocationIds
       updatedAt
     }
   }

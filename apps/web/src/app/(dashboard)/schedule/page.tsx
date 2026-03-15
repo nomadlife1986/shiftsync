@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useQuery, useMutation } from '@apollo/client';
+import { fromZonedTime } from 'date-fns-tz';
 import {
   Plus,
   Edit2,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../../providers/auth-provider';
 import { Header } from '../../../components/layout/header';
+import { ErrorBanner } from '../../../components/ui/error-banner';
 import {
   Dialog,
   DialogContent,
@@ -37,10 +39,11 @@ import {
   DELETE_SHIFT,
   ASSIGN_STAFF,
   UNASSIGN_STAFF,
-  WHAT_IF_ASSIGNMENT,
+  PUBLISH_SHIFT,
   PUBLISH_SCHEDULE,
   UNPUBLISH_SCHEDULE,
 } from '../../../lib/graphql/mutations';
+import { formatAppError } from '../../../lib/utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -116,13 +119,15 @@ interface StaffMember {
 interface Violation {
   type: string;
   message: string;
+  severity?: 'error' | 'warning';
 }
 
-interface WhatIfResult {
-  canAssign: boolean;
-  violations: Violation[];
-  warnings: Violation[];
-  projectedWeeklyHours: number;
+interface StaffSuggestion {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  matchScore: number;
+  warnings: string[];
 }
 
 interface AssignResult {
@@ -130,6 +135,7 @@ interface AssignResult {
   assignmentId?: string;
   violations: Violation[];
   overtimeWarnings: Violation[];
+  suggestions?: StaffSuggestion[];
 }
 
 // ---------------------------------------------------------------------------
@@ -179,16 +185,53 @@ function getWeekStart(date: Date): Date {
   return d;
 }
 
-function formatTime(isoDate: string): string {
-  return new Date(isoDate).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+function getDateKeyInTimeZone(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const year = parts.find((part) => part.type === 'year')?.value ?? '0000';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '00';
+  const day = parts.find((part) => part.type === 'day')?.value ?? '00';
+  return `${year}-${month}-${day}`;
 }
 
-function buildShiftDateTime(date: string, time: string): string {
-  // date: "2025-03-15", time: "09:00" → ISO string
-  return new Date(`${date}T${time}:00`).toISOString();
+function getDayLabelInTimeZone(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+  }).format(date);
+}
+
+function getDayNumberInTimeZone(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    day: 'numeric',
+  }).format(date);
+}
+
+function formatTimeInTimeZone(isoDate: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(isoDate));
+}
+
+function formatDateInTimeZone(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
+}
+
+function buildShiftDateTime(date: string, time: string, timeZone: string): string {
+  return fromZonedTime(`${date}T${time}:00`, timeZone).toISOString();
 }
 
 function shiftDateStr(shift: Shift): string {
@@ -199,41 +242,53 @@ function shiftDateStr(shift: Shift): string {
 // Sub-components
 // ---------------------------------------------------------------------------
 
+/** Renders a list of violations with per-item severity colouring. */
 function ViolationList({
   violations,
-  label,
-  variant,
+  compact = false,
 }: {
   violations: Violation[];
-  label: string;
-  variant: 'error' | 'warning';
+  compact?: boolean;
 }) {
   if (!violations || violations.length === 0) return null;
-  const isError = variant === 'error';
+  const errors = violations.filter((v) => v.severity === 'error' || !v.severity);
+  const warnings = violations.filter((v) => v.severity === 'warning');
   return (
-    <div
-      className={`rounded-lg p-3 mt-3 ${isError ? 'bg-red-50 border border-red-200' : 'bg-amber-50 border border-amber-200'}`}
-    >
-      <div className="flex items-center gap-1.5 mb-2">
-        <AlertTriangle
-          className={`w-4 h-4 ${isError ? 'text-red-600' : 'text-amber-600'}`}
-        />
-        <span
-          className={`text-sm font-medium ${isError ? 'text-red-700' : 'text-amber-700'}`}
-        >
-          {label}
-        </span>
-      </div>
-      <ul className="space-y-1">
-        {violations.map((v, i) => (
-          <li
-            key={i}
-            className={`text-xs ${isError ? 'text-red-600' : 'text-amber-600'}`}
-          >
-            {v.message}
-          </li>
-        ))}
-      </ul>
+    <div className={`space-y-1.5 ${compact ? '' : 'mt-2'}`}>
+      {errors.length > 0 && (
+        <div className="rounded-md px-2.5 py-1.5 bg-red-50 border border-red-200">
+          <div className="flex items-center gap-1 mb-0.5">
+            <AlertTriangle className="w-3 h-3 text-red-500 shrink-0" />
+            <span className="text-[10px] font-semibold text-red-700 uppercase tracking-wide">
+              Blocked
+            </span>
+          </div>
+          <ul className="space-y-0.5">
+            {errors.map((v, i) => (
+              <li key={i} className="text-xs text-red-600">
+                {v.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div className="rounded-md px-2.5 py-1.5 bg-amber-50 border border-amber-200">
+          <div className="flex items-center gap-1 mb-0.5">
+            <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+            <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">
+              Warnings
+            </span>
+          </div>
+          <ul className="space-y-0.5">
+            {warnings.map((v, i) => (
+              <li key={i} className="text-xs text-amber-600">
+                {v.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -272,25 +327,26 @@ export default function SchedulePage() {
 
   // ---- assign panel state ----
   const [activeShift, setActiveShift] = useState<Shift | null>(null);
-  const [whatIfResult, setWhatIfResult] = useState<
-    Map<string, WhatIfResult>
-  >(new Map());
-  const [whatIfLoading, setWhatIfLoading] = useState<string | null>(null);
-  const [assignError, setAssignError] = useState<AssignResult | null>(null);
-  const [assignSuccess, setAssignSuccess] = useState<string | null>(null);
+  // Per-staff result: 'loading' while in-flight, AssignResult once done
+  const [staffResult, setStaffResult] = useState<Map<string, 'loading' | AssignResult>>(new Map());
 
   // ---- schedule query ----
-  const { data, loading, refetch } = useQuery(GET_WEEK_SCHEDULE, {
+  const { data, loading, refetch, error: scheduleError } = useQuery(GET_WEEK_SCHEDULE, {
     variables: { locationId: selectedLocationId, week: currentWeek },
     skip: !selectedLocationId,
+    pollInterval: 10000,
+    notifyOnNetworkStatusChange: true,
   });
 
   // ---- locations query ----
-  const { data: locationsData } = useQuery(GET_LOCATIONS);
+  const { data: locationsData, error: locationsError } = useQuery(GET_LOCATIONS);
   const locations: Location[] = locationsData?.locations ?? [];
+  const selectedLocation = locations.find((location) => location.id === selectedLocationId) ?? null;
+  const selectedTimezone =
+    selectedLocation?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   // ---- staff by location query ----
-  const { data: staffData } = useQuery(GET_STAFF_BY_LOCATION, {
+  const { data: staffData, error: staffError } = useQuery(GET_STAFF_BY_LOCATION, {
     variables: { locationId: selectedLocationId },
     skip: !selectedLocationId || !assignPanelOpen,
   });
@@ -325,28 +381,50 @@ export default function SchedulePage() {
     onError: (e) => setPageError(e.message),
   });
 
-  const [assignStaff, { loading: assigning }] = useMutation(ASSIGN_STAFF);
+  const [assignStaff] = useMutation(ASSIGN_STAFF);
   const [unassignStaff, { loading: unassigning }] = useMutation(UNASSIGN_STAFF);
-  const [whatIfAssignment] = useMutation(WHAT_IF_ASSIGNMENT);
+  const [publishShift, { loading: publishingShift }] = useMutation(PUBLISH_SHIFT, {
+    onCompleted: () => {
+      setPageError(null);
+      refetch();
+    },
+    onError: (e) => setPageError(formatAppError(e)),
+  });
   const [publishSchedule, { loading: publishing }] = useMutation(
     PUBLISH_SCHEDULE,
-    { onCompleted: () => refetch() },
+    {
+      onCompleted: () => {
+        setPageError(null);
+        refetch();
+      },
+      onError: (e) => setPageError(formatAppError(e)),
+    },
   );
   const [unpublishSchedule, { loading: unpublishing }] = useMutation(
     UNPUBLISH_SCHEDULE,
-    { onCompleted: () => refetch() },
+    {
+      onCompleted: () => {
+        setPageError(null);
+        refetch();
+      },
+      onError: (e) => setPageError(formatAppError(e)),
+    },
   );
 
   // ---- derived data ----
   const shifts: Shift[] = data?.weekSchedule?.shifts ?? [];
 
-  const shiftsByDay = DAYS.map((day, i) => {
-    const dayDate = new Date(currentWeek.getTime() + i * 86400000);
+  const shiftsByDay = DAYS.map((_, i) => {
+    const dayDate = new Date(currentWeek);
+    dayDate.setDate(currentWeek.getDate() + i);
+    dayDate.setHours(12, 0, 0, 0);
+    const dateKey = getDateKeyInTimeZone(dayDate, selectedTimezone);
     return {
-      day,
+      day: getDayLabelInTimeZone(dayDate, selectedTimezone),
       date: dayDate,
+      dateKey,
       shifts: shifts.filter(
-        (s) => new Date(s.startTime).getDay() === (i + 1) % 7,
+        (s) => getDateKeyInTimeZone(new Date(s.startTime), selectedTimezone) === dateKey,
       ),
     };
   });
@@ -383,8 +461,8 @@ export default function SchedulePage() {
         variables: {
           input: {
             locationId: shiftForm.locationId,
-            startTime: buildShiftDateTime(shiftForm.date, shiftForm.startTime),
-            endTime: buildShiftDateTime(shiftForm.date, shiftForm.endTime),
+            startTime: buildShiftDateTime(shiftForm.date, shiftForm.startTime, selectedTimezone),
+            endTime: buildShiftDateTime(shiftForm.date, shiftForm.endTime, selectedTimezone),
             requiredSkill: shiftForm.requiredSkill.toLowerCase(),
             headcount: shiftForm.headcount,
             editCutoffHours: shiftForm.editCutoffHours,
@@ -392,7 +470,7 @@ export default function SchedulePage() {
         },
       });
     },
-    [createShift, shiftForm],
+    [createShift, selectedTimezone, shiftForm],
   );
 
   const handleEditSubmit = useCallback(
@@ -403,8 +481,8 @@ export default function SchedulePage() {
         variables: {
           id: editingShift.id,
           input: {
-            startTime: buildShiftDateTime(shiftForm.date, shiftForm.startTime),
-            endTime: buildShiftDateTime(shiftForm.date, shiftForm.endTime),
+            startTime: buildShiftDateTime(shiftForm.date, shiftForm.startTime, selectedTimezone),
+            endTime: buildShiftDateTime(shiftForm.date, shiftForm.endTime, selectedTimezone),
             requiredSkill: shiftForm.requiredSkill.toLowerCase(),
             headcount: shiftForm.headcount,
             editCutoffHours: shiftForm.editCutoffHours,
@@ -412,7 +490,7 @@ export default function SchedulePage() {
         },
       });
     },
-    [updateShift, editingShift, shiftForm],
+    [updateShift, editingShift, selectedTimezone, shiftForm],
   );
 
   const handleDelete = useCallback(
@@ -426,55 +504,37 @@ export default function SchedulePage() {
 
   const openAssignPanel = useCallback((shift: Shift) => {
     setActiveShift(shift);
-    setWhatIfResult(new Map());
-    setAssignError(null);
-    setAssignSuccess(null);
+    setStaffResult(new Map());
     setAssignPanelOpen(true);
   }, []);
 
-  const handleWhatIf = useCallback(
+  const handleAssignAttempt = useCallback(
     async (staffMember: StaffMember) => {
       if (!activeShift) return;
-      setWhatIfLoading(staffMember.id);
+      setStaffResult((prev) => new Map(prev).set(staffMember.id, 'loading'));
       try {
-        const { data } = await whatIfAssignment({
+        const { data } = await assignStaff({
           variables: { shiftId: activeShift.id, userId: staffMember.id },
         });
-        setWhatIfResult((prev) => {
+        const result: AssignResult = data.assignStaff;
+        setPageError(null);
+        setStaffResult((prev) => new Map(prev).set(staffMember.id, result));
+        if (result.success) {
+          const { data: refreshed } = await refetch();
+          if (refreshed) {
+            const updated = refreshed.weekSchedule?.shifts?.find(
+              (s: Shift) => s.id === activeShift.id,
+            );
+            if (updated) setActiveShift(updated);
+          }
+        }
+      } catch (error) {
+        setPageError(formatAppError(error));
+        setStaffResult((prev) => {
           const next = new Map(prev);
-          next.set(staffMember.id, data.whatIfAssignment);
+          next.delete(staffMember.id);
           return next;
         });
-      } finally {
-        setWhatIfLoading(null);
-      }
-    },
-    [activeShift, whatIfAssignment],
-  );
-
-  const handleAssign = useCallback(
-    async (staffMember: StaffMember) => {
-      if (!activeShift) return;
-      setAssignError(null);
-      setAssignSuccess(null);
-      const { data } = await assignStaff({
-        variables: { shiftId: activeShift.id, userId: staffMember.id },
-      });
-      const result: AssignResult = data.assignStaff;
-      if (result.success) {
-        setAssignSuccess(
-          `${staffMember.firstName} ${staffMember.lastName} assigned successfully.`,
-        );
-        // Refresh shift data
-        const { data: refreshed } = await refetch();
-        if (refreshed) {
-          const updated = refreshed.weekSchedule?.shifts?.find(
-            (s: Shift) => s.id === activeShift.id,
-          );
-          if (updated) setActiveShift(updated);
-        }
-      } else {
-        setAssignError(result);
       }
     },
     [activeShift, assignStaff, refetch],
@@ -483,15 +543,26 @@ export default function SchedulePage() {
   const handleUnassign = useCallback(
     async (assignment: Assignment) => {
       if (!activeShift) return;
-      await unassignStaff({
-        variables: { shiftId: activeShift.id, userId: assignment.userId },
-      });
-      const { data: refreshed } = await refetch();
-      if (refreshed) {
-        const updated = refreshed.weekSchedule?.shifts?.find(
-          (s: Shift) => s.id === activeShift.id,
-        );
-        if (updated) setActiveShift(updated);
+      try {
+        await unassignStaff({
+          variables: { shiftId: activeShift.id, userId: assignment.userId },
+        });
+        setPageError(null);
+        // Clear the per-staff result so they can be re-assigned
+        setStaffResult((prev) => {
+          const next = new Map(prev);
+          next.delete(assignment.userId);
+          return next;
+        });
+        const { data: refreshed } = await refetch();
+        if (refreshed) {
+          const updated = refreshed.weekSchedule?.shifts?.find(
+            (s: Shift) => s.id === activeShift.id,
+          );
+          if (updated) setActiveShift(updated);
+        }
+      } catch (error) {
+        setPageError(formatAppError(error));
       }
     },
     [activeShift, unassignStaff, refetch],
@@ -673,7 +744,7 @@ export default function SchedulePage() {
       {/* ------------------------------------------------------------------ */}
       <Header
         title="Schedule"
-        subtitle={`Week of ${currentWeek.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`}
+        subtitle={`Week of ${formatDateInTimeZone(currentWeek, selectedTimezone)}${selectedLocation ? ` · ${selectedLocation.timezone}` : ''}`}
         actions={
           <div className="flex items-center gap-2 flex-wrap">
             {/* Location select */}
@@ -775,14 +846,13 @@ export default function SchedulePage() {
       {/* ------------------------------------------------------------------ */}
       {/* Body                                                                 */}
       {/* ------------------------------------------------------------------ */}
-      {pageError && (
-        <div className="mx-6 mt-4 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>{pageError}</span>
-          <button onClick={() => setPageError(null)} className="ml-auto text-red-400 hover:text-red-600">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+      {(locationsError || scheduleError || staffError || pageError) && (
+        <ErrorBanner
+          className="mx-6 mt-4"
+          title="Schedule action failed"
+          message={pageError ?? formatAppError(locationsError ?? scheduleError ?? staffError)}
+          onDismiss={pageError ? () => setPageError(null) : undefined}
+        />
       )}
 
       {!selectedLocationId ? (
@@ -800,7 +870,8 @@ export default function SchedulePage() {
             <div className="grid grid-cols-7 gap-2 min-w-[700px]">
               {shiftsByDay.map(({ day, date, shifts: dayShifts }) => {
                 const isToday =
-                  date.toDateString() === new Date().toDateString();
+                  getDateKeyInTimeZone(date, selectedTimezone) ===
+                  getDateKeyInTimeZone(new Date(), selectedTimezone);
                 return (
                   <div key={day} className="min-h-[200px]">
                     {/* Day header */}
@@ -815,7 +886,7 @@ export default function SchedulePage() {
                             : 'text-gray-900'
                         }`}
                       >
-                        {date.getDate()}
+                        {getDayNumberInTimeZone(date, selectedTimezone)}
                       </p>
                     </div>
 
@@ -831,12 +902,15 @@ export default function SchedulePage() {
                             setDeleteConfirmId(shift.id)
                           }
                           onAssign={() => openAssignPanel(shift)}
+                          onPublish={() => publishShift({ variables: { id: shift.id } })}
+                          publishingShift={publishingShift}
                           deleteConfirmActive={
                             deleteConfirmId === shift.id
                           }
                           onDeleteConfirm={() => handleDelete(shift.id)}
                           onDeleteCancel={() => setDeleteConfirmId(null)}
                           deleting={deleting}
+                          timeZone={selectedTimezone}
                         />
                       ))}
 
@@ -922,7 +996,7 @@ export default function SchedulePage() {
             <DialogTitle className="flex items-center gap-2">
               <Users className="w-5 h-5 text-blue-600" />
               {activeShift
-                ? `Assign Staff — ${formatTime(activeShift.startTime)} – ${formatTime(activeShift.endTime)} · ${SKILL_LABELS[activeShift.requiredSkill?.toUpperCase() as Skill] ?? activeShift.requiredSkill}`
+                ? `Assign Staff — ${formatTimeInTimeZone(activeShift.startTime, selectedTimezone)} – ${formatTimeInTimeZone(activeShift.endTime, selectedTimezone)} · ${SKILL_LABELS[activeShift.requiredSkill?.toUpperCase() as Skill] ?? activeShift.requiredSkill}`
                 : 'Assign Staff'}
             </DialogTitle>
           </DialogHeader>
@@ -968,129 +1042,109 @@ export default function SchedulePage() {
                 )}
               </section>
 
-              {/* Success / error feedback */}
-              {assignSuccess && (
-                <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700">
-                  <CheckCircle className="w-4 h-4 shrink-0" />
-                  {assignSuccess}
-                </div>
-              )}
-              {assignError && (
-                <div className="space-y-1">
-                  <ViolationList
-                    violations={assignError.violations}
-                    label="Constraint violations"
-                    variant="error"
-                  />
-                  <ViolationList
-                    violations={assignError.overtimeWarnings}
-                    label="Overtime warnings"
-                    variant="warning"
-                  />
-                </div>
-              )}
-
-              {/* Available staff */}
+              {/* Staff list */}
               {canManage && (
                 <section>
                   <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
                     <UserPlus className="w-4 h-4 text-blue-500" />
-                    Available Staff
+                    Add Staff
+                    <span className="text-xs font-normal text-gray-400 ml-1">
+                      — certified staff at this location
+                    </span>
                   </h3>
                   {staffList.length === 0 ? (
                     <p className="text-sm text-gray-400 italic">
-                      No staff found for this location
+                      No certified staff found for this location
                     </p>
                   ) : (
-                    <ul className="space-y-2">
+                    <ul className="space-y-1.5">
                       {staffList.map((s) => {
                         const alreadyAssigned = activeShift.assignments.some(
                           (a) => a.userId === s.id,
                         );
-                        const preview = whatIfResult.get(s.id);
-                        const hasSkill = s.skills?.includes(
-                          activeShift.requiredSkill,
-                        );
+                        const result = staffResult.get(s.id);
+                        const isLoading = result === 'loading';
+                        const assignResult = result !== undefined && result !== 'loading' ? result as AssignResult : null;
+                        const hasSkill = s.skills
+                          ?.map((sk: string) => sk.toUpperCase())
+                          .includes(activeShift.requiredSkill?.toUpperCase() ?? '');
 
                         return (
                           <li
                             key={s.id}
-                            className={`border rounded-lg p-3 transition-colors ${
-                              alreadyAssigned
-                                ? 'border-green-200 bg-green-50 opacity-60'
-                                : 'border-gray-200 bg-white hover:border-blue-300'
+                            className={`border rounded-lg p-2.5 transition-colors ${
+                              alreadyAssigned || (assignResult?.success)
+                                ? 'border-green-200 bg-green-50'
+                                : assignResult && !assignResult.success
+                                  ? 'border-red-100 bg-red-50/30'
+                                  : 'border-gray-200 bg-white'
                             }`}
                           >
-                            <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="text-sm font-medium text-gray-900">
                                   {s.firstName} {s.lastName}
                                 </p>
                                 <p className="text-xs text-gray-500 truncate">
                                   {s.skills
-                                    ?.map((sk) => SKILL_LABELS[sk as Skill] ?? sk)
+                                    ?.map((sk: string) => SKILL_LABELS[sk.toUpperCase() as Skill] ?? sk)
                                     .join(', ') || 'No skills listed'}
+                                  {!hasSkill && (
+                                    <span className="ml-1 text-amber-600">· skill mismatch</span>
+                                  )}
                                 </p>
-                                {!hasSkill && (
-                                  <p className="text-xs text-amber-600 mt-0.5 flex items-center gap-1">
-                                    <AlertTriangle className="w-3 h-3" />
-                                    Skill mismatch
-                                  </p>
-                                )}
                               </div>
 
-                              {!alreadyAssigned && (
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  <button
-                                    disabled={whatIfLoading === s.id}
-                                    onClick={() => handleWhatIf(s)}
-                                    className="px-2.5 py-1.5 text-xs border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                                  >
-                                    {whatIfLoading === s.id
-                                      ? 'Checking…'
-                                      : 'Preview'}
-                                  </button>
-                                  <button
-                                    disabled={assigning}
-                                    onClick={() => handleAssign(s)}
-                                    className="px-2.5 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-1"
-                                  >
-                                    <UserPlus className="w-3 h-3" />
-                                    Assign
-                                  </button>
-                                </div>
-                              )}
-
-                              {alreadyAssigned && (
-                                <span className="text-xs text-green-600 font-medium shrink-0">
+                              {alreadyAssigned || assignResult?.success ? (
+                                <span className="text-xs text-green-600 font-medium shrink-0 flex items-center gap-1">
+                                  <CheckCircle className="w-3.5 h-3.5" />
                                   Assigned
                                 </span>
+                              ) : (
+                                <button
+                                  disabled={isLoading}
+                                  onClick={() => handleAssignAttempt(s)}
+                                  className="px-2.5 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-1 shrink-0"
+                                >
+                                  {isLoading ? (
+                                    <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
+                                  ) : (
+                                    <UserPlus className="w-3 h-3" />
+                                  )}
+                                  {isLoading ? 'Assigning…' : 'Assign'}
+                                </button>
                               )}
                             </div>
 
-                            {/* What-if preview result */}
-                            {preview && (
+                            {/* Show result after attempt */}
+                            {assignResult && !assignResult.success && (
                               <div className="mt-2">
-                                {preview.canAssign ? (
-                                  <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1 flex items-center gap-1">
-                                    <CheckCircle className="w-3.5 h-3.5 shrink-0" />
-                                    No conflicts — projected {preview.projectedWeeklyHours}h this week
-                                  </div>
-                                ) : (
-                                  <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
-                                    Cannot assign — {preview.violations[0]?.message}
-                                  </div>
+                                <ViolationList
+                                  violations={[
+                                    ...(assignResult.violations ?? []),
+                                    ...(assignResult.overtimeWarnings ?? []).map((w) => ({
+                                      ...w,
+                                      severity: 'error' as const,
+                                    })),
+                                  ]}
+                                  compact
+                                />
+                                {assignResult.suggestions && assignResult.suggestions.length > 0 && (
+                                  <p className="text-xs text-blue-600 mt-1.5">
+                                    Try instead:{' '}
+                                    {assignResult.suggestions.slice(0, 2).map((sg, i) => (
+                                      <span key={sg.userId}>
+                                        {i > 0 && ', '}
+                                        {sg.firstName} {sg.lastName}
+                                      </span>
+                                    ))}
+                                  </p>
                                 )}
-                                <ViolationList
-                                  violations={preview.violations}
-                                  label="Violations"
-                                  variant="error"
-                                />
-                                <ViolationList
-                                  violations={preview.warnings}
-                                  label="Warnings"
-                                  variant="warning"
-                                />
+                              </div>
+                            )}
+                            {assignResult?.success && (assignResult.violations ?? []).length > 0 && (
+                              <div className="mt-1.5">
+                                <ViolationList violations={assignResult.violations ?? []} compact />
                               </div>
                             )}
                           </li>
@@ -1126,10 +1180,13 @@ interface ShiftCardProps {
   onEdit: () => void;
   onDeleteRequest: () => void;
   onAssign: () => void;
+  onPublish: () => void;
+  publishingShift: boolean;
   deleteConfirmActive: boolean;
   onDeleteConfirm: () => void;
   onDeleteCancel: () => void;
   deleting: boolean;
+  timeZone: string;
 }
 
 function ShiftCard({
@@ -1138,10 +1195,13 @@ function ShiftCard({
   onEdit,
   onDeleteRequest,
   onAssign,
+  onPublish,
+  publishingShift,
   deleteConfirmActive,
   onDeleteConfirm,
   onDeleteCancel,
   deleting,
+  timeZone,
 }: ShiftCardProps) {
   const isDraft = shift.status === 'DRAFT';
   const isPublished = shift.status === 'PUBLISHED';
@@ -1172,15 +1232,9 @@ function ShiftCard({
         onClick={onAssign}
       >
         <p className="font-semibold text-gray-900">
-          {new Date(shift.startTime).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-          })}{' '}
+          {formatTimeInTimeZone(shift.startTime, timeZone)}{' '}
           –{' '}
-          {new Date(shift.endTime).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-          })}
+          {formatTimeInTimeZone(shift.endTime, timeZone)}
         </p>
         <p className="text-gray-600 mt-0.5">
           {SKILL_LABELS[shift.requiredSkill] ?? shift.requiredSkill}
@@ -1210,7 +1264,7 @@ function ShiftCard({
 
       {/* Manager action buttons */}
       {canManage && (
-        <div className="border-t border-inherit px-2 py-1.5 flex items-center gap-1">
+        <div className="border-t border-inherit px-2 py-1.5 flex flex-wrap items-center gap-1">
           {isDraft && (
             <>
               <button
@@ -1218,7 +1272,7 @@ function ShiftCard({
                   e.stopPropagation();
                   onEdit();
                 }}
-                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-white/60 text-gray-500 hover:text-blue-600 transition-colors"
+                className="inline-flex min-w-[54px] items-center gap-0.5 rounded border border-blue-200 bg-white/90 px-1.5 py-0.5 text-gray-600 shadow-sm transition-colors hover:bg-blue-50 hover:text-blue-700"
                 title="Edit shift"
               >
                 <Edit2 className="w-3 h-3" />
@@ -1229,11 +1283,23 @@ function ShiftCard({
                   e.stopPropagation();
                   onDeleteRequest();
                 }}
-                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-white/60 text-gray-500 hover:text-red-600 transition-colors"
+                className="inline-flex min-w-[62px] items-center gap-0.5 rounded border border-red-200 bg-white/90 px-1.5 py-0.5 text-gray-600 shadow-sm transition-colors hover:bg-red-50 hover:text-red-700"
                 title="Delete shift"
               >
                 <Trash2 className="w-3 h-3" />
                 Delete
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPublish();
+                }}
+                disabled={publishingShift}
+                className="inline-flex min-w-[66px] items-center gap-0.5 rounded border border-green-200 bg-white/90 px-1.5 py-0.5 text-gray-600 shadow-sm transition-colors hover:bg-green-50 hover:text-green-700 disabled:opacity-50"
+                title="Publish shift"
+              >
+                <CheckCircle className="w-3 h-3" />
+                {publishingShift ? '…' : 'Publish'}
               </button>
             </>
           )}
@@ -1242,7 +1308,7 @@ function ShiftCard({
               e.stopPropagation();
               onAssign();
             }}
-            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-white/60 text-gray-500 hover:text-blue-600 transition-colors ml-auto"
+            className="inline-flex min-w-[58px] items-center gap-0.5 rounded border border-gray-200 bg-white/90 px-1.5 py-0.5 text-gray-600 shadow-sm transition-colors hover:bg-blue-50 hover:text-blue-700 ml-auto"
             title="Manage staff"
           >
             <UserPlus className="w-3 h-3" />

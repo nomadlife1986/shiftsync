@@ -3,8 +3,10 @@ import { useState } from 'react';
 import { useQuery } from '@apollo/client';
 import { ClipboardList, Filter, Search, Loader2, Clock } from 'lucide-react';
 import { Header } from '../../../components/layout/header';
+import { ErrorBanner } from '../../../components/ui/error-banner';
 import { GET_DOMAIN_EVENTS } from '../../../lib/graphql/queries';
 import { useRoleGuard } from '../../../hooks/use-role-guard';
+import { formatAppError } from '../../../lib/utils';
 
 const AGG_COLORS: Record<string, string> = {
   Shift:       'bg-blue-100 text-blue-700',
@@ -18,7 +20,7 @@ export default function AuditPage() {
   const [aggregateType, setAggregateType] = useState('');
   const [eventType, setEventType] = useState('');
 
-  const { data, loading } = useQuery(GET_DOMAIN_EVENTS, {
+  const { data, loading, error } = useQuery(GET_DOMAIN_EVENTS, {
     variables: {
       filter: {
         aggregateType: aggregateType || undefined,
@@ -34,6 +36,14 @@ export default function AuditPage() {
       <Header title="Audit Log" subtitle="Immutable event-sourced history" />
 
       <div className="flex-1 overflow-auto p-6">
+        {error && (
+          <ErrorBanner
+            className="mb-4"
+            title="Could not load audit events"
+            message={formatAppError(error)}
+          />
+        )}
+
         {/* Filters */}
         <div className="flex flex-wrap gap-4 mb-6 bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-sm font-medium text-gray-500">

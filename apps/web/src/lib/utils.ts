@@ -96,3 +96,17 @@ export function formatSkillLabel(skill: string): string {
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 }
+
+export function formatAppError(error: unknown): string {
+  const fallback = 'Something went wrong. Please try again.';
+
+  if (!error) return fallback;
+  if (typeof error === 'string') return error.replace(/^GraphQL error:\s*/i, '');
+
+  if (typeof error === 'object') {
+    const maybeMessage = 'message' in error ? String((error as { message?: unknown }).message ?? '') : '';
+    if (maybeMessage) return maybeMessage.replace(/^GraphQL error:\s*/i, '');
+  }
+
+  return fallback;
+}

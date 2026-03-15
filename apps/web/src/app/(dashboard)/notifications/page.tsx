@@ -1,5 +1,6 @@
 'use client';
 import { useQuery, useMutation } from '@apollo/client';
+import { useState } from 'react';
 import {
   Calendar,
   Megaphone,
@@ -15,9 +16,11 @@ import {
   Inbox,
 } from 'lucide-react';
 import { Header } from '../../../components/layout/header';
+import { ErrorBanner } from '../../../components/ui/error-banner';
 import { GET_NOTIFICATIONS } from '../../../lib/graphql/queries';
 import { MARK_NOTIFICATION_READ, MARK_ALL_READ } from '../../../lib/graphql/mutations';
 import { useNotificationStore } from '../../../stores/notification-store';
+import { formatAppError } from '../../../lib/utils';
 
 type NotifType =
   | 'SHIFT_ASSIGNED'
@@ -51,12 +54,20 @@ function NotifIcon({ type }: { type: string }) {
 }
 
 export default function NotificationsPage() {
-  const { data, loading, refetch } = useQuery(GET_NOTIFICATIONS);
+  const [actionError, setActionError] = useState('');
+  const { data, loading, refetch, error } = useQuery(GET_NOTIFICATIONS, { pollInterval: 15000 });
   const setUnreadCount = useNotificationStore(s => s.setUnreadCount);
 
-  const [markRead] = useMutation(MARK_NOTIFICATION_READ, { onCompleted: () => refetch() });
+  const [markRead] = useMutation(MARK_NOTIFICATION_READ, {
+    onCompleted: () => {
+      setActionError('');
+      refetch();
+    },
+    onError: (mutationError) => setActionError(formatAppError(mutationError)),
+  });
   const [markAll, { loading: markingAll }] = useMutation(MARK_ALL_READ, {
-    onCompleted: () => { refetch(); setUnreadCount(0); },
+    onCompleted: () => { refetch(); setUnreadCount(0); setActionError(''); },
+    onError: (mutationError) => setActionError(formatAppError(mutationError)),
   });
 
   const notifications: any[] = data?.notifications ?? [];
@@ -84,6 +95,23 @@ export default function NotificationsPage() {
       />
 
       <div className="flex-1 overflow-auto p-6">
+        {error && (
+          <ErrorBanner
+            className="mb-4"
+            title="Could not load notifications"
+            message={formatAppError(error)}
+          />
+        )}
+
+        {actionError && (
+          <ErrorBanner
+            className="mb-4"
+            title="Notification action failed"
+            message={actionError}
+            onDismiss={() => setActionError('')}
+          />
+        )}
+
         {loading ? (
           <div className="flex items-center justify-center h-64">
             <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
