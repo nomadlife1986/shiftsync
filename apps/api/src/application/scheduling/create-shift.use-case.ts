@@ -1,4 +1,13 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+
+function getWeekStart(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getDay(); // 0=Sun … 6=Sat
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // roll back to Monday
+  d.setDate(diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
 import { IUseCase } from '../common/use-case.interface';
 import { IShiftRepository, SHIFT_REPOSITORY } from '../../domain/scheduling/repositories/shift.repository.interface';
 import { IEventStoreRepository, EVENT_STORE_REPOSITORY } from '../../domain/event-store/repositories/event-store.repository.interface';
@@ -38,7 +47,7 @@ export class CreateShiftUseCase implements IUseCase<CreateShiftInput, ShiftEntit
         requiredSkill: input.requiredSkill,
         headcount: input.headcount,
         status: 'DRAFT',
-        scheduleWeek: input.scheduleWeek ?? null,
+        scheduleWeek: input.scheduleWeek ?? getWeekStart(input.startTime),
         publishedAt: null,
         editCutoffHours: input.editCutoffHours ?? 48,
         createdAt: new Date(),

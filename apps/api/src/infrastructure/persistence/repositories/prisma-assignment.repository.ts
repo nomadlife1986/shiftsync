@@ -20,7 +20,9 @@ export class PrismaAssignmentRepository implements IAssignmentRepository {
   }
 
   async findByShiftId(shiftId: string): Promise<AssignmentEntity[]> {
-    const assignments = await this.prisma.assignment.findMany({ where: { shiftId } });
+    const assignments = await this.prisma.assignment.findMany({
+      where: { shiftId, status: { not: 'CANCELLED' } },
+    });
     return assignments.map(a => this.toEntity(a));
   }
 
@@ -61,7 +63,9 @@ export class PrismaAssignmentRepository implements IAssignmentRepository {
   }
 
   async findByShiftIds(shiftIds: string[]): Promise<AssignmentEntity[]> {
-    const assignments = await this.prisma.assignment.findMany({ where: { shiftId: { in: shiftIds } } });
+    const assignments = await this.prisma.assignment.findMany({
+      where: { shiftId: { in: shiftIds }, status: { not: 'CANCELLED' } },
+    });
     return assignments.map(a => this.toEntity(a));
   }
 

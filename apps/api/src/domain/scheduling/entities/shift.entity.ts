@@ -84,9 +84,7 @@ export class ShiftEntity extends AggregateRoot<ShiftProps> {
     if (this.props.status !== 'PUBLISHED') {
       throw new Error('Only published shifts can be unpublished');
     }
-    if (!this.canEdit()) {
-      throw new Error('Cannot unpublish after edit cutoff');
-    }
+    // No edit-cutoff check here — managers can always unpublish a schedule
     this.props.status = 'DRAFT';
     this.props.publishedAt = null;
     this.props.updatedAt = new Date();

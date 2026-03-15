@@ -41,7 +41,7 @@ export function SidebarProvider({
             ...style,
           } as React.CSSProperties
         }
-        className={cn('flex min-h-screen w-full', className)}
+        className={cn('flex h-screen w-full overflow-hidden', className)}
         {...props}
       >
         {children}
@@ -60,7 +60,7 @@ export const Sidebar = React.forwardRef<
     ref={ref}
     data-sidebar="sidebar"
     className={cn(
-      'group/sidebar flex h-screen w-[--sidebar-width] shrink-0 flex-col overflow-hidden',
+      'group/sidebar flex h-full w-[--sidebar-width] shrink-0 flex-col overflow-hidden',
       className,
     )}
     {...props}

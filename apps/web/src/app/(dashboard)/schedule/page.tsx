@@ -148,7 +148,7 @@ interface ShiftFormState {
 
 const defaultShiftForm = (locationId: string): ShiftFormState => ({
   locationId,
-  date: new Date().toISOString().slice(0, 10),
+  date: toLocalDateStr(new Date()),
   startTime: '09:00',
   endTime: '17:00',
   requiredSkill: 'SERVER',
@@ -161,6 +161,14 @@ const defaultShiftForm = (locationId: string): ShiftFormState => ({
 // ---------------------------------------------------------------------------
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Returns YYYY-MM-DD in LOCAL time — toISOString() would give wrong date for UTC+ zones */
+function toLocalDateStr(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
 
 function getWeekStart(date: Date): Date {
   const d = new Date(date);
@@ -184,7 +192,7 @@ function buildShiftDateTime(date: string, time: string): string {
 }
 
 function shiftDateStr(shift: Shift): string {
-  return new Date(shift.startTime).toISOString().slice(0, 10);
+  return toLocalDateStr(new Date(shift.startTime));
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +267,9 @@ export default function SchedulePage() {
   );
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
 
+  // ---- page-level error ----
+  const [pageError, setPageError] = useState<string | null>(null);
+
   // ---- assign panel state ----
   const [activeShift, setActiveShift] = useState<Shift | null>(null);
   const [whatIfResult, setWhatIfResult] = useState<
@@ -289,23 +300,29 @@ export default function SchedulePage() {
   const [createShift, { loading: creating }] = useMutation(CREATE_SHIFT, {
     onCompleted: () => {
       setCreateDialogOpen(false);
+      setPageError(null);
       refetch();
     },
+    onError: (e) => setPageError(e.message),
   });
 
   const [updateShift, { loading: updating }] = useMutation(UPDATE_SHIFT, {
     onCompleted: () => {
       setEditDialogOpen(false);
       setEditingShift(null);
+      setPageError(null);
       refetch();
     },
+    onError: (e) => setPageError(e.message),
   });
 
   const [deleteShift, { loading: deleting }] = useMutation(DELETE_SHIFT, {
     onCompleted: () => {
       setDeleteConfirmId(null);
+      setPageError(null);
       refetch();
     },
+    onError: (e) => setPageError(e.message),
   });
 
   const [assignStaff, { loading: assigning }] = useMutation(ASSIGN_STAFF);
@@ -349,7 +366,7 @@ export default function SchedulePage() {
     setEditingShift(shift);
     setShiftForm({
       locationId: shift.locationId,
-      date: startDate.toISOString().slice(0, 10),
+      date: toLocalDateStr(startDate),
       startTime: startDate.toTimeString().slice(0, 5),
       endTime: endDate.toTimeString().slice(0, 5),
       requiredSkill: shift.requiredSkill.toUpperCase() as Skill,
@@ -758,6 +775,16 @@ export default function SchedulePage() {
       {/* ------------------------------------------------------------------ */}
       {/* Body                                                                 */}
       {/* ------------------------------------------------------------------ */}
+      {pageError && (
+        <div className="mx-6 mt-4 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{pageError}</span>
+          <button onClick={() => setPageError(null)} className="ml-auto text-red-400 hover:text-red-600">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {!selectedLocationId ? (
         <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-3">
           <MapPin className="w-10 h-10" />
@@ -818,7 +845,7 @@ export default function SchedulePage() {
                           onClick={() => {
                             setShiftForm({
                               ...defaultShiftForm(selectedLocationId),
-                              date: date.toISOString().slice(0, 10),
+                              date: toLocalDateStr(date),
                             });
                             setCreateDialogOpen(true);
                           }}
@@ -895,7 +922,7 @@ export default function SchedulePage() {
             <DialogTitle className="flex items-center gap-2">
               <Users className="w-5 h-5 text-blue-600" />
               {activeShift
-                ? `Assign Staff — ${formatTime(activeShift.startTime)} – ${formatTime(activeShift.endTime)} · ${SKILL_LABELS[activeShift.requiredSkill]}`
+                ? `Assign Staff — ${formatTime(activeShift.startTime)} – ${formatTime(activeShift.endTime)} · ${SKILL_LABELS[activeShift.requiredSkill?.toUpperCase() as Skill] ?? activeShift.requiredSkill}`
                 : 'Assign Staff'}
             </DialogTitle>
           </DialogHeader>

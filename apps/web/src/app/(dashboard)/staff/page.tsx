@@ -148,14 +148,14 @@ function CreateUserDialog({
   const [error, setError] = useState<string | null>(null);
 
   const [createUser, { loading }] = useMutation(CREATE_USER, {
-    // Append the new user to the cached list without refetching
+    // Prepend the new user so they appear at the top immediately
     update(cache, { data }) {
       if (!data?.createUser) return;
       const existing = cache.readQuery<{ users: any[] }>({ query: GET_USERS });
       if (existing) {
         cache.writeQuery({
           query: GET_USERS,
-          data: { users: [...existing.users, data.createUser] },
+          data: { users: [data.createUser, ...existing.users] },
         });
       }
     },
