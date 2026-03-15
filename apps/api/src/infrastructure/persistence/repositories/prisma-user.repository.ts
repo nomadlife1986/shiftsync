@@ -68,7 +68,7 @@ export class PrismaUserRepository implements IUserRepository {
     if (filter?.role) where.role = filter.role;
     if (filter?.locationId) {
       where.OR = [
-        { managerLocations: { some: { locationId: filter.locationId } } },
+        { managedLocations: { some: { locationId: filter.locationId } } },
         { certifications: { some: { locationId: filter.locationId, revokedAt: null } } },
       ];
     }
