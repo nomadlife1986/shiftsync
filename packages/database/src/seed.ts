@@ -8,7 +8,7 @@ const prisma = new PrismaClient({ adapter });
 // Simple password hash for seeding (in production, bcrypt is used in the app)
 // For seed data, we store a bcrypt-compatible hash of "password123"
 // This is the bcrypt hash of "password123" with 10 rounds
-const PASSWORD_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMyeTfmMdmN8eFKxR3xiDBAJqt.vWQw1.JW';
+const PASSWORD_HASH = '$2a$10$gXLPiFCSSbRQGOR39numeejWtJdomKqNN.lBu6qH9J1Wl8BlVakiS';
 
 function cuid(): string {
   return crypto.randomBytes(12).toString('hex');
