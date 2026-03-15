@@ -1,0 +1,75 @@
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { IAssignmentRepository } from '../../../domain/scheduling/repositories/assignment.repository.interface';
+import { AssignmentEntity } from '../../../domain/scheduling/entities/assignment.entity';
+
+@Injectable()
+export class PrismaAssignmentRepository implements IAssignmentRepository {
+  constructor(private prisma: PrismaService) {}
+
+  private toEntity(a: any): AssignmentEntity {
+    return AssignmentEntity.reconstitute({
+      shiftId: a.shiftId,
+      userId: a.userId,
+      status: a.status,
+      assignedBy: a.assignedBy,
+      assignedAt: a.assignedAt ?? a.createdAt,
+      createdAt: a.createdAt,
+      updatedAt: a.updatedAt,
+    }, a.id);
+  }
+
+  async findByShiftId(shiftId: string): Promise<AssignmentEntity[]> {
+    const assignments = await this.prisma.assignment.findMany({ where: { shiftId } });
+    return assignments.map(a => this.toEntity(a));
+  }
+
+  async findByUserId(userId: string, dateRange?: { start: Date; end: Date }): Promise<AssignmentEntity[]> {
+    const where: any = { userId, status: { in: ['ASSIGNED', 'SWAP_PENDING'] } };
+    if (dateRange) {
+      where.shift = { startTime: { gte: dateRange.start, lt: dateRange.end } };
+    }
+    const assignments = await this.prisma.assignment.findMany({ where, include: { shift: true } });
+    return assignments.map(a => this.toEntity(a));
+  }
+
+  async findByUserAndWeek(userId: string, weekStart: Date): Promise<AssignmentEntity[]> {
+    const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+    return this.findByUserId(userId, { start: weekStart, end: weekEnd });
+  }
+
+  async save(assignment: AssignmentEntity): Promise<AssignmentEntity> {
+    const existing = await this.prisma.assignment.findUnique({ where: { id: assignment.id } });
+    const data = {
+      shiftId: assignment.shiftId,
+      userId: assignment.userId,
+      status: assignment.status as any,
+      assignedBy: assignment.assignedBy,
+    };
+    if (!existing) {
+      await this.prisma.assignment.create({ data: { ...data, id: assignment.id } });
+    } else {
+      await this.prisma.assignment.update({ where: { id: assignment.id }, data });
+    }
+    return this.findById(assignment.id) as Promise<AssignmentEntity>;
+  }
+
+  async findById(id: string): Promise<AssignmentEntity | null> {
+    if (!id) return null;
+    const a = await this.prisma.assignment.findUnique({ where: { id } });
+    return a ? this.toEntity(a) : null;
+  }
+
+  async findByShiftIds(shiftIds: string[]): Promise<AssignmentEntity[]> {
+    const assignments = await this.prisma.assignment.findMany({ where: { shiftId: { in: shiftIds } } });
+    return assignments.map(a => this.toEntity(a));
+  }
+
+  async countByShiftId(shiftId: string): Promise<number> {
+    return this.prisma.assignment.count({ where: { shiftId, status: { in: ['ASSIGNED', 'SWAP_PENDING'] } } });
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.prisma.assignment.delete({ where: { id } });
+  }
+}
