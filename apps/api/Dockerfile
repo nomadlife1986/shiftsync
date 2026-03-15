@@ -18,6 +18,7 @@ WORKDIR /app
 COPY . .
 
 # Generate Prisma client (schema only, no DB connection needed)
+ENV DATABASE_URL=postgresql://postgres:postgres@localhost:5432/shiftsync?schema=public
 RUN cd packages/database && npx prisma generate --schema=prisma/schema.prisma
 
 # Compile TypeScript
