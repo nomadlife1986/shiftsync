@@ -18,8 +18,6 @@ Local services:
 | Web | `http://localhost:3000` |
 | API / GraphQL | `http://localhost:3002/graphql` |
 
-The default local database is PostgreSQL on `localhost:5433`.
-
 ## Login
 
 The login screen includes demo quick-fill buttons for the three evaluator paths:
@@ -28,7 +26,7 @@ The login screen includes demo quick-fill buttons for the three evaluator paths:
 - Manager
 - Staff
 
-Use those buttons on [login/page.tsx](/Users/didd/Work/priority-soft/shiftsync/apps/web/src/app/%28auth%29/login/page.tsx) to enter the app as each role without manually hunting for seeded accounts.
+Use those buttons on login page to enter the app as each role without manually hunting for seeded accounts.
 
 ## Known Limitations
 
